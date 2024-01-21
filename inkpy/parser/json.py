@@ -4,28 +4,28 @@ import json_stream
 import typing as t
 import warnings
 
-from ..runtime import Story
-
 
 class JsonParser:
-    MAX_SUPPORTED_VERSION = 20
-    MIN_SUPPORTED_VERSION = 11
+    INK_VERSION_CURRENT: int = 21
+    INK_VERSION_MINIMUM_COMPATIBLE: int = 18
 
-    def __init__(self, strict_version_check=False):
-        self.strict_version_check = strict_version_check
-
-    def _check_version(self):
-        version = 20
-        if not (self.MIN_SUPPORTED_VERSION < version < self.MAX_SUPPORTED_VERSION):
-            message = (
-                f"Unsupported ink JSON runtime format version: {version}, "
-                f">={self.MAX_SUPPORTED_VERSION},<={self.MAX_SUPPORTED_VERSION}"
+    def _check_version(self, version: int):
+        if version > self.INK_VERSION_CURRENT:
+            raise RuntimeError(
+                "Version of ink used to build story was newer than the current version "
+                "of the engine"
             )
-
-        if self.strict_version_check:
-            raise RuntimeError(message)
-        else:
-            warnings.warn(message, RuntimeWarning)
+        elif version > self.INK_VERSION_MINIMUM_COMPATIBLE:
+            raise RuntimeError(
+                "Version of ink used to build story is too old to be loaded by this "
+                "version of the engine"
+            )
+        elif version != self.INK_VERSION_CURRENT:
+            warnings.warn(
+                "Version of ink used to build story doesn't match current version of "
+                "engine. Non-critical, but recommend synchronising.",
+                RuntimeWarning,
+            )
 
     def parse(self, input: str | t.TextIO):
         if isinstance(input, str):
@@ -33,10 +33,18 @@ class JsonParser:
         else:
             data = json_stream.load(input)
 
-        self._check_version(data["inkVersion"])
-        story = Story()
-        self._parse(data["root"], story)
+        version = data.get("inkVersion")
+        if not version:
+            raise ValueError("Version of ink could not be found")
 
-    def _parse(self, container, story):
-        for subcontainer in container:
-            self._parse(subcontainer, story)
+        try:
+            version = int(version)
+        except ValueError:
+            raise ValueError(f"Version of ink could not be parsed: {version}")
+
+        self._check_version(version)
+
+        if "root" not in data:
+            raise ValueError("Root node for ink not found")
+
+        return data["root"], data.get("listDefs", [])

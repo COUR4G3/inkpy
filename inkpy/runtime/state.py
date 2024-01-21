@@ -1,6 +1,9 @@
 import typing as t
 
+from .call_stack import CallStack
 from .flow import Flow
+from .pointer import Pointer
+from .variables_state import VariablesState
 
 
 if t.TYPE_CHECKING:
@@ -13,11 +16,16 @@ class State:
     def __init__(self, story: "Story"):
         self.story = story
 
-        self.current_flow = Flow(self.DEFAULT_FLOW_NAME)
-        self.named_flows: dict[str, Flow] = {}
-
+        self.current_flow = Flow(self.DEFAULT_FLOW_NAME, story)
+        self.current_turn_index: int = -1
         self.errors: list[str] = []
+        self.eval_stack: list = []
+        self.named_flows: dict[str, Flow] = {}
         self.output_stream: list = []
+        self.seed: int = 42
+        self.turn_indices: dict[str, int] = {}
+        self.variables_state = VariablesState(self.call_stack, story.list_definitions)
+        self.visit_counts: dict[str, int] = {}
         self.warnings: list[str] = []
 
         self.goto_start()
@@ -25,6 +33,10 @@ class State:
     @property
     def alive_flow_names(self) -> list[str]:
         return [f for f in self.named_flows if f != self.DEFAULT_FLOW_NAME]
+
+    @property
+    def call_stack(self) -> CallStack:
+        return self.current_flow.call_stack
 
     @property
     def can_continue(self) -> bool:
@@ -40,6 +52,11 @@ class State:
 
     def force_end(self):
         return
+
+    def goto_start(self):
+        self.call_stack.current_element.current_pointer = Pointer.start_of(
+            self.story.main_content_container
+        )
 
     @property
     def has_error(self) -> bool:

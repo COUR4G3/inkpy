@@ -171,7 +171,9 @@ class InkList(UserDict[InkListItem, int]):
         return list
 
     def list_with_subrange(
-        self, min_bound: "InkList" | int = 0, max_bound: "InkList" | int = sys.maxsize
+        self,
+        min_bound: t.Type["InkList"] | int = 0,
+        max_bound: t.Type["InkList"] | int = sys.maxsize,
     ) -> "InkList":
         ordered = self.ordered()
 
@@ -234,7 +236,7 @@ class InkList(UserDict[InkListItem, int]):
         return ordered
 
     @property
-    def origin_of_max_item(self) -> "ListDefinition" | None:
+    def origin_of_max_item(self) -> t.Optional["ListDefinition"]:
         max_origin_name = self.max[0].origin_name
         for origin in self.origins:
             if origin.name == max_origin_name:

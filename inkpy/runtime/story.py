@@ -1,9 +1,13 @@
+import json
 import typing as t
 import warnings
 
 from collections import defaultdict
 from contextlib import contextmanager
 
+import json_stream
+
+from ..parser.json import JsonParser
 from .container import Container
 from .list_definition import ListDefinition
 from .profiler import Profiler
@@ -20,21 +24,16 @@ class ExternalFunctionDefinition:
 
 
 class Story:
-    INK_VERSION_CURRENT: int = 21
-    INK_VERSION_MINIMUM_COMPATIBLE: int = 18
-
-    def __init__(self, name: t.Optional[str | t.TextIO] = None):
-        self.name = name
-
+    def __init__(self, input: str | t.TextIO):
         self.external_functions: dict[str, ExternalFunctionDefinition] = {}
         self.observers: dict[str, list[t.Callable]] = defaultdict(list)
 
-        self._has_validated_externals = False
-        self._list_definitions: list[ListDefinition] | None = None
-        self._main_content_container: Container | None = None
+        parser = JsonParser()
+        root, list_definitions = parser.parse(input)
 
-        if name:
-            self.load(name)
+        self._has_validated_externals = False
+        self.list_definitions: list[ListDefinition] = list_definitions
+        self._main_content_container: Container = root
 
         self.reset_state()
 
@@ -74,40 +73,6 @@ class Story:
     def has_warning(self) -> bool:
         return self.state.has_warning
 
-    def load(self, name: str | t.TextIO):
-        self._has_validated_externals = False
-
-        if isinstance(name, str):
-            return
-
-        version = int(data.get("inkVersion"))
-        if not version:
-            raise RuntimeError("ink version number not found")
-
-        if version > self.INK_VERSION_CURRENT:
-            raise RuntimeError(
-                "Version of ink used to build story was newer than the current version "
-                "of the engine"
-            )
-        elif version > self.INK_VERSION_MINIMUM_COMPATIBLE:
-            raise RuntimeError(
-                "Version of ink used to build story is too old to be loaded by this "
-                "version of the engine"
-            )
-        elif version != self.INK_VERSION_CURRENT:
-            warnings.warn(
-                "Version of ink used to build story doesn't match current version of "
-                "engine. Non-critical, but recommend synchronising.",
-                RuntimeWarning,
-            )
-
-        root = data.get("root")
-        if not root:
-            raise RuntimeError("Root node for ink not found")
-
-        self._list_definitions = ListDefinition.from_json(data.get("listDefs"))
-        self._main_content_container = root
-
     @property
     def main_content_container(self) -> Container | None:
         return self._main_content_container
@@ -138,15 +103,6 @@ class Story:
             yield
         finally:
             self.end_profiling()
-
-    def reload(self, name: t.Optional[str | t.TextIO] = None, reset: bool = True):
-        if not name:
-            name = self.name
-
-        self.load(name)
-
-        if reset:
-            self.reset_state()
 
     def remove_flow(self, name: str):
         self.state._remove_flow(name)

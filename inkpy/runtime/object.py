@@ -2,9 +2,11 @@ import typing as t
 
 from dataclasses import dataclass
 
-from .container import Container
 from .debug import DebugMetadata
 from .path import Path
+
+if t.TYPE_CHECKING:
+    from .container import Container
 
 
 @dataclass
@@ -31,7 +33,9 @@ class InkObject:
                 components = []
 
                 child = self
-                container = isinstance(child.parent, Container) and child.parent
+                container = (
+                    isinstance(child.parent, t.Type["Container"]) and child.parent
+                )
 
                 while container:
                     if child.name:
@@ -41,7 +45,8 @@ class InkObject:
 
                     child = container
                     container = (
-                        isinstance(container.parent, Container) and container.parent
+                        isinstance(container.parent, t.Type["Container"])
+                        and container.parent
                     )
 
                 self._path = Path(components)
@@ -53,13 +58,13 @@ class InkObject:
         self._path = path
 
     @property
-    def root(self) -> t.Optional[Container]:
+    def root(self) -> t.Optional["Container"]:
         ancestor = self
         while ancestor.parent:
             ancestor = ancestor.parent
-        return isinstance(ancestor, Container) and ancestor
+        return isinstance(ancestor, t.Type["Container"]) and ancestor
 
-    def set_child(self, obj: "InkObject", name: str, value: "InkObject" | None):
+    def set_child(self, obj: "InkObject", name: str, value: t.Optional["InkObject"]):
         setattr(obj, name, value)
 
         if value:
