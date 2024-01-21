@@ -1,28 +1,50 @@
 import typing as t
+import warnings
 
-from .choice import Choice
+from collections import defaultdict
+from contextlib import contextmanager
+
+from .container import Container
+from .list_definition import ListDefinition
+from .profiler import Profiler
 from .state import State
 
 
+class ExternalFunctionDefinition:
+    def __init__(self, function: t.Callable, lookahead_safe: bool = True):
+        self.function = function
+        self.lookahead_safe = lookahead_safe
+
+    def __call__(self, *args):
+        return self.function(*args)
+
+
 class Story:
-    ink_version_current = 21
-    ink_version_minimum_compatible = 18
+    INK_VERSION_CURRENT: int = 21
+    INK_VERSION_MINIMUM_COMPATIBLE: int = 18
 
     def __init__(self, name: t.Optional[str | t.TextIO] = None):
         self.name = name
 
-        self.root = None
+        self.external_functions: dict[str, ExternalFunctionDefinition] = {}
+        self.observers: dict[str, list[t.Callable]] = defaultdict(list)
 
-        self.external_functions: dict[str, t.Callable] = {}
-        self.state = State(self)
+        self._has_validated_externals = False
+        self._list_definitions: list[ListDefinition] | None = None
+        self._main_content_container: Container | None = None
 
-    def __iter__(self):
-        while self.can_continue:
-            yield self.continue_()
+        if name:
+            self.load(name)
 
-    def bind_external_function(self, name: str, f: t.Callable = None):
+        self.reset_state()
+
+    def bind_external_function(
+        self, name: str, f: t.Callable = None, lookahead_safe: bool = True
+    ):
         def decorator(f):
-            self.external_functions[name] = f
+            self.external_functions[name] = ExternalFunctionDefinition(
+                f, lookahead_safe=lookahead_safe
+            )
             return f
 
         return f and decorator(f) or decorator
@@ -31,69 +53,95 @@ class Story:
     def can_continue(self) -> bool:
         return self.state.can_continue
 
-    def continue_(self):
+    def continue_(self) -> str:
+        if not self._has_validated_externals:
+            self.validate_external_bindings()
+
         return
 
-    def continue_maximally(self):
-        return
+    def continue_maximally(self) -> t.Generator[str, None, None]:
+        while self.can_continue:
+            yield self.continue_()
+
+    def end_profiling(self):
+        self._profiler = None
 
     @property
-    def choices(self) -> list[Choice]:
-        return self.state.choices
-
-    def choose(self, choice: Choice | int):
-        if isinstance(choice, int):
-            choice = self.choices[choice]
-
-    def choose_choice(self, choice: Choice | int):
-        return self.choose(choice)
-
-    def choose_path_string(self, path: str):
-        return self.goto(path)
+    def has_error(self) -> bool:
+        return self.state.has_error
 
     @property
-    def current_choices(self) -> list[Choice]:
-        return self.choices
-
-    def external_function(self, name: str):
-        return self.bind_external_function(name)
-
-    def force_end(self):
-        return
-
-    def goto(self, path: str):
-        return
+    def has_warning(self) -> bool:
+        return self.state.has_warning
 
     def load(self, name: str | t.TextIO):
-        return
+        self._has_validated_externals = False
+
+        if isinstance(name, str):
+            return
+
+        version = int(data.get("inkVersion"))
+        if not version:
+            raise RuntimeError("ink version number not found")
+
+        if version > self.INK_VERSION_CURRENT:
+            raise RuntimeError(
+                "Version of ink used to build story was newer than the current version "
+                "of the engine"
+            )
+        elif version > self.INK_VERSION_MINIMUM_COMPATIBLE:
+            raise RuntimeError(
+                "Version of ink used to build story is too old to be loaded by this "
+                "version of the engine"
+            )
+        elif version != self.INK_VERSION_CURRENT:
+            warnings.warn(
+                "Version of ink used to build story doesn't match current version of "
+                "engine. Non-critical, but recommend synchronising.",
+                RuntimeWarning,
+            )
+
+        root = data.get("root")
+        if not root:
+            raise RuntimeError("Root node for ink not found")
+
+        self._list_definitions = ListDefinition.from_json(data.get("listDefs"))
+        self._main_content_container = root
+
+    @property
+    def main_content_container(self) -> Container | None:
+        return self._main_content_container
 
     def observe(self, name: str, f: t.Callable[[str, t.Any], None] = None):
+        if name not in self.state.variables_state:
+            raise Exception("")
+
         def decorator(f):
             self.observers[name].append(f)
             return f
 
         return f and decorator(f) or decorator
 
-    def observe_variable(self, name: str, f: t.Callable[[str, t.Any], None] = None):
-        return self.observe(name, f=f)
-
-    @property
-    def observers(self) -> dict[str, list[t.Callable[[str, t.Any], None]]]:
-        return self.state.globals.observers
-
     def observes(self, *names: str, f: t.Callable[[str, t.Any], None] = None):
         def decorator(f):
             for name in names:
-                self.observers[name].append(f)
+                self.observe(name, f)
             return f
 
         return f and decorator(f) or decorator
 
-    def reload(self, name: str | t.TextIO = None, reset: bool = False):
+    @contextmanager
+    def profile(self):
+        self.start_profiling()
+
+        try:
+            yield
+        finally:
+            self.end_profiling()
+
+    def reload(self, name: t.Optional[str | t.TextIO] = None, reset: bool = True):
         if not name:
             name = self.name
-            if isinstance(name, t.TextIO):
-                name.seek(0)
 
         self.load(name)
 
@@ -110,25 +158,15 @@ class Story:
         self.state.reset_errors()
 
     def reset_globals(self):
-        if "global decl" in self.root.named_content:
-            original_pointer = self.state.current_pointer
-
-            # self.choose_path(Path("global decl", incrementing_turn_index=False))
-            # continue_internal
-
-            self.state.current_pointer = original_pointer
-
-        self.state.globals.snapshot_default_globals()
+        return
 
     def reset_state(self):
         self.state = State(self)
-        # TODO: handle?
-        # self.state.globals.variable_changed_event += VariableStateDidChangeEvent
 
         self.reset_globals()
 
-    def reset_warnings(self):
-        self.state.reset_warnings()
+    def start_profiling(self):
+        self._profiler = Profiler()
 
     def switch_flow(self, name: str):
         self.state._switch_flow(name)
@@ -136,12 +174,8 @@ class Story:
     def switch_to_default_flow(self):
         self.state._switch_to_default_flow()
 
-    def to_dict(self) -> dict:
-        return
+    def unbind_external_function(self, name: str):
+        del self.external_functions[name]
 
-    def to_json(self) -> str:
-        return
-
-    @property
-    def variables(self) -> dict[str, t.Any]:
-        return self.state.globals
+    def validate_external_bindings(self):
+        self._has_validated_externals = True
