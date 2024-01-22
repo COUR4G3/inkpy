@@ -19,7 +19,7 @@ classifiers = [
     "Topic :: Games/Entertainment :: Role-Playing",
 ]
 dynamic = ["version"]
-requires-python = ">= 3.11"
+requires-python = ">= 3.9"
 dependencies = []
 
 [project.scripts]
@@ -54,7 +54,7 @@ force-exclude = '''
 )
 '''
 line-length = 88
-target-version = ['py311']
+target-version = ['py39']
 
 [tool.coverage.run]
 source = ["inkpy"]
@@ -103,7 +103,7 @@ combine_as_imports = true
 known_first_party = ['druglord3k', 'tests']
 
 [tool.mypy]
-python_version = '3.11'
+python_version = '3.9'
 
 [[tool.mypy.overrides]]
 module = [

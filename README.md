@@ -128,14 +128,14 @@ Or compile from within the API:
 
 ```python
 
-# you can compile an `<inkjs.Story>` object
+# you can compile an `<inkpy.Story>` object
 story.compile()
 
-# or pass a `<inkjs.Story>` to the `compile` function
-inkjs.compile(story)
+# or pass a `<inkpy.Story>` to the `compile` function
+inkpy.compile(story)
 
 # ... or you can pass a string containing raw `ink`
-inkjs.compile(content)
+inkpy.compile(content)
 
 ```
 

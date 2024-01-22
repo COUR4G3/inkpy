@@ -34,3 +34,11 @@ class ControlCommand(InkObject):
 
     def __init__(self, type: CommandType):
         self.type = type
+
+    @staticmethod
+    def PopFunction() -> "ControlCommand":
+        return ControlCommand(ControlCommand.CommandType.PopFunction)
+
+    @staticmethod
+    def PopTunnel() -> "ControlCommand":
+        return ControlCommand(ControlCommand.CommandType.PopTunnel)

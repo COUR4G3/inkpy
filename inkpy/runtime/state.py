@@ -83,6 +83,10 @@ class State:
         return len(self.warnings) > 0
 
     @property
+    def in_string_eval(self) -> bool:
+        return True
+
+    @property
     def previous_pointer(self) -> Pointer:
         return self.call_stack.current_thread.previous_pointer
 

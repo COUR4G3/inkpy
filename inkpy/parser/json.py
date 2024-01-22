@@ -192,6 +192,10 @@ class JsonParser:
             if token == "<>":
                 return Glue()
 
+            # Older Glue Encoding
+            # if token in ("G<", "G>"):
+            #     return Glue()
+
             # Control commands (Implemented hash set as per comments in ink / inkjs)
             if token in ControlCommand.CommandType._value2member_map_:
                 return ControlCommand(token)
@@ -303,6 +307,7 @@ class JsonParser:
                 assignment.is_global = is_global_variable
                 return assignment
 
+            # Tag
             if value := obj.get("#"):
                 return Tag(str(value))
 
