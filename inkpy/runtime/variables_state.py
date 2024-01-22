@@ -5,6 +5,7 @@ from collections import UserDict
 from .call_stack import CallStack
 from .list_definition import ListDefinition
 from .object import InkObject
+from .value import ListValue
 
 
 class VariablesState:
@@ -12,7 +13,7 @@ class VariablesState:
     _changed_variables_for_batch_ops: set[str] = set()
 
     default_global_variables: dict[str, InkObject] = {}
-    variable_changed_event_callbacks: dict[str, t.Callable] = []
+    variable_changed_event_callbacks: list[t.Callable] = []
 
     def __init__(
         self, call_stack: CallStack, list_definitions: t.Optional[ListDefinition] = None
@@ -38,6 +39,21 @@ class VariablesState:
                     self.variable_changed_event(name, current_value)
 
             self._changed_variables_for_batch_ops.clear()
+
+    def observe_variable_change(self, callback: t.Callable):
+        self.variable_changed_event_callbacks.append(callback)
+
+    def set_global(self, name: str, value: InkObject):
+        old_value = self.global_variables.get(name, None)
+
+        ListValue.retain_list_origins_for_assignment(old_value, value)
+
+        self.global_variables[name] = value
+
+        if self.batch_observing_variable_changes:
+            self._changed_variables_for_batch_ops.add(name)
+        else:
+            self.variable_changed_event(name, value)
 
     def variable_changed_event(self, name: str, value: InkObject):
         for callback in self.variable_changed_event_callbacks:
