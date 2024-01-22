@@ -46,7 +46,7 @@ class CallStack:
 
     def __init__(self, story: t.Optional["Story"] = None):
         if story:
-            self.start_of_root = Pointer.start_of(story.root_content_container)
+            self.start_of_root = Pointer.start_of(story.root)
             self.reset()
 
     @property

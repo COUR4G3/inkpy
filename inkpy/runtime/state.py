@@ -40,7 +40,7 @@ class State:
 
     @property
     def can_continue(self) -> bool:
-        return
+        return self.current_pointer and not self.has_error
 
     @property
     def current_flow_name(self) -> str:
@@ -50,8 +50,24 @@ class State:
     def current_flow_is_default_flow(self) -> bool:
         return self.current_flow.name == self.DEFAULT_FLOW_NAME
 
+    @property
+    def current_pointer(self) -> Pointer:
+        return self.call_stack.current_element.current_pointer
+
+    @current_pointer.setter
+    def current_pointer(self, value: Pointer):
+        self.call_stack.current_element.current_pointer = value
+
+    @property
+    def current_text(self) -> str:
+        return ""  # TODO: get output
+
     def force_end(self):
-        return
+        self.call_stack.reset()
+        self.current_flow.current_choices.clear()
+        self.current_pointer = None
+        self.previous_pointer = None
+        self.did_safe_exit = True
 
     def goto_start(self):
         self.call_stack.current_element.current_pointer = Pointer.start_of(
@@ -65,6 +81,14 @@ class State:
     @property
     def has_warning(self) -> bool:
         return len(self.warnings) > 0
+
+    @property
+    def previous_pointer(self) -> Pointer:
+        return self.call_stack.current_thread.previous_pointer
+
+    @previous_pointer.setter
+    def previous_pointer(self, value: Pointer):
+        self.call_stack.current_thread.previous_pointer = value
 
     def _remove_flow(self, name: str):
         if name == self.DEFAULT_FLOW_NAME:

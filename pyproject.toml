@@ -24,7 +24,7 @@ dependencies = []
 
 [project.scripts]
 inkpy = "inkpy.cli:main"
-inklecate.py = "inkpy.compiler.cli:main"
+"inklecate.py" = "inkpy.compiler.cli:main"
 
 [project.urls]
 Demo = "https://inkpy.github.io/"
@@ -112,7 +112,7 @@ module = [
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
-addopts = "--cov=inkpy/ --cov-report=term-missing:skip-covered"
+addopts = "--cov=inkpy/ --cov-report=term-missing:skip-covered --import-mode=importlib"
 markers = [
     "slow: tests that are slow",
     "integration: integration tests that require external tools",

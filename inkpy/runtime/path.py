@@ -85,6 +85,11 @@ class Path:
         else:
             raise TypeError(f"Cannot append '{type(other)}' to path")
 
+    @property
+    def last_component(self) -> t.Optional["Path.Component"]:
+        if self.components:
+            return self.components[-1]
+
     def path_by_appending_component(self, component: "Path.Component") -> "Path":
         path = Path()
         path.components.extend(self.components)
