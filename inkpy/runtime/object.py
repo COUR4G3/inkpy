@@ -98,13 +98,13 @@ class InkObject:
 
     def resolve_path(self, path: Path) -> "SearchResult":
         if path.is_relative:
-            nearest_container = isinstance(self, Container) and self
+            nearest_container = type(self) == "Container" and self
             if not nearest_container:
                 assert (
                     self.parent
                 ), "Can't resolve relative path because we don't have a parent"
 
-                nearest_container = isinstance(self.parent, Container) and self.parent
+                nearest_container = type(self) == "Container" and self.parent
                 assert nearest_container, "Expected parent to be a container"
                 assert path.components[0].is_parent
 

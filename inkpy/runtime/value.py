@@ -22,6 +22,8 @@ class ValueType(IntEnum):
 
 class Value(InkObject, metaclass=ABCMeta):
     def __init__(self, value: object):
+        super().__init__()
+
         self.value = value
 
     def __bool__(self):
@@ -65,7 +67,7 @@ class BoolValue(Value):
     type = ValueType.Bool
 
     def __init__(self, value: bool = False):
-        self.value = value
+        super().__init__(value)
 
     def __bool__(self) -> bool:
         return self.value
@@ -93,7 +95,7 @@ class IntValue(Value):
     type = ValueType.Int
 
     def __init__(self, value: int = 0):
-        self.value = value
+        super().__init__(value)
 
     def __bool__(self) -> bool:
         return self.value != 0
@@ -121,7 +123,7 @@ class FloatValue(Value):
     type = ValueType.Float
 
     def __init__(self, value: int = 0.0):
-        self.value = value
+        super().__init__(value)
 
     def __bool__(self) -> bool:
         return self.value != 0.0
@@ -157,7 +159,7 @@ class StringValue(Value):
                 self.is_inline_whitespace = False
                 break
 
-        self.value = value
+        super().__init__(value)
 
     def __bool__(self) -> bool:
         return len(self.value) > 0
@@ -189,7 +191,7 @@ class DivertTargetValue(Value):
     type = ValueType.DivertTarget
 
     def __init__(self, value: t.Optional[Path] = None):
-        self.value = value
+        super().__init__(value)
 
     def __bool__(self):
         raise RuntimeError("Shouldn't be checking the truthiness of a divert target")
@@ -216,8 +218,9 @@ class VariablePointerValue(Value):
     type = ValueType.VariablePointer
 
     def __init__(self, value: t.Optional[str] = None, index: int = -1):
-        self.value = value
         self.index = index
+
+        super().__init__(value)
 
     def __bool__(self):
         raise RuntimeError("Shouldn't be checking the truthiness of a variable pointer")
@@ -247,7 +250,9 @@ class ListValue(Value):
     type = ValueType.List
 
     def __init__(self, value: t.Optional[InkList] = None):
-        self.value = InkList(value)
+        self.value: InkList
+
+        super().__init__(InkList(value))
 
     def __bool__(self):
         return len(self.value) > 0

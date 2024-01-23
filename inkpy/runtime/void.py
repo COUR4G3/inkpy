@@ -2,4 +2,5 @@ from .object import InkObject
 
 
 class Void(InkObject):
-    pass
+    def __bool__(self):
+        return False

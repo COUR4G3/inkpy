@@ -9,5 +9,7 @@ class VariableAssignment(InkObject):
         self.is_new_declaration = is_new_declaration
         self.is_global = False
 
+        super().__init__()
+
     def __str__(self):
         return f"VarAssign to {self.variable_name}"

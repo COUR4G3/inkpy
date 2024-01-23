@@ -33,7 +33,12 @@ class ControlCommand(InkObject):
         EndTag = "/#"
 
     def __init__(self, type: CommandType):
+        super().__init__()
+
         self.type = type
+
+    def __str__(self):
+        return f"ControlCommand {self.type}"
 
     @staticmethod
     def PopFunction() -> "ControlCommand":

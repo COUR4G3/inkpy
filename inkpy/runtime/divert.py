@@ -9,6 +9,8 @@ from .pointer import Pointer
 
 class Divert(InkObject):
     def __init__(self, type: t.Optional[PushPopType] = None):
+        super().__init__()
+
         self.pushes_to_stack = type is not None
         self.stack_push_type: PushPopType
 

@@ -46,6 +46,8 @@ class NativeFunctionCall(InkObject):
     def __init__(self, type: FunctionType):
         self.type = type
 
+        super().__init__()
+
     @staticmethod
     def call_with_name(name: str) -> "NativeFunctionCall":
         return NativeFunctionCall(
@@ -58,4 +60,4 @@ class NativeFunctionCall(InkObject):
 
     @property
     def name(self):
-        return NativeFunctionCall.FunctionType._value2member_map_[self.type].name
+        return self.type.name

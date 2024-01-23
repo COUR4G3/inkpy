@@ -146,6 +146,8 @@ class JsonParser:
                         named_content_item.name = key
                     named_only_content[key] = named_content_item
 
+            container.named_only_content = named_only_content
+
         return container
 
     def _parse_list_to_obj_list(self, list, skip_last: bool = False):
@@ -197,8 +199,9 @@ class JsonParser:
             #     return Glue()
 
             # Control commands (Implemented hash set as per comments in ink / inkjs)
-            if token in ControlCommand.CommandType._value2member_map_:
-                return ControlCommand(token)
+            command_type = ControlCommand.CommandType._value2member_map_.get(token)
+            if command_type:
+                return ControlCommand(command_type)
 
             # Native Functions
             if token == "L^":

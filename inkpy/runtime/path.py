@@ -42,7 +42,9 @@ class Path:
 
     def __init__(
         self,
-        components: t.Union[list["Path.Component"], "Path.Component", str],
+        components: t.Optional[
+            t.Union[list["Path.Component"], "Path.Component", str]
+        ] = None,
         tail: t.Optional["Path"] = None,
         is_relative: bool = False,
     ):
@@ -55,16 +57,18 @@ class Path:
                 is_relative = True
                 components = components[1:]
 
-                components = components.split(".")
-                for component in components:
-                    try:
-                        index = int(component)
-                    except ValueError:
-                        self.components.append(Path.Component(component))
-                    else:
-                        self.components.append(Path.Component(index))
-        else:
+            components = components.split(".")
+            for component in components:
+                try:
+                    index = int(component)
+                except ValueError:
+                    self.components.append(Path.Component(component))
+                else:
+                    self.components.append(Path.Component(index))
+        elif components:
             self.components.append(components)
+
+        if tail:
             self.components = self.components.extend(tail.components)
 
         self.is_relative = is_relative
@@ -76,6 +80,9 @@ class Path:
             return self.path_by_appending_component(other)
         else:
             raise TypeError(f"Cannot append '{type(other)}' to path")
+
+    def __len__(self) -> int:
+        return len(self.components)
 
     def __truediv__(self, other: t.Union["Path", "Path.Component"]) -> "Path":
         if isinstance(other, Path):

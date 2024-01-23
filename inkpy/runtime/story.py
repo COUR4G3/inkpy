@@ -1,3 +1,4 @@
+import logging
 import typing as t
 
 from collections import defaultdict
@@ -10,11 +11,19 @@ from .control_command import ControlCommand
 from .divert import Divert
 from .exceptions import StoryException
 from .list_definition import ListDefinition
+from .native_function_call import NativeFunctionCall
 from .object import InkObject
 from .pointer import Pointer
 from .profiler import Profiler
+from .push_pop import PushPopType
 from .state import State
+from .tag import Tag
 from .value import VariablePointerValue
+from .variable_assignment import VariableAssignment
+from .variable_reference import VariableReference
+
+
+logger = logging.getLogger()
 
 
 class ExternalFunctionDefinition:
@@ -46,8 +55,17 @@ class Story(InkObject):
         self._profiler: t.Optional[Profiler] = None
         self._recursive_continue_count: int = 0
         self._saw_lookahead_unsafe_function_after_newline: bool = False
+        self._state_snapshot_at_last_newline: t.Optional[State] = None
 
         self.reset_state()
+
+    def add_error(self, message: str):
+        self.state.errors.append(message)
+        logger.error(message)
+
+    def add_warning(self, message: str):
+        self.state.warnings.append(message)
+        logger.warning(message)
 
     def bind_external_function(
         self, name: str, f: t.Callable = None, lookahead_safe: bool = True
@@ -131,7 +149,17 @@ class Story(InkObject):
 
                 self.reset_errors()
             else:
-                message = ""
+                if self.state.has_error:
+                    first_issue = self.state.errors[0]
+                else:
+                    first_issue = self.state.warnings[0]
+
+                message = (
+                    f"Ink had {len(self.state.errors)} error(s) and "
+                    f"{len(self.state.warnings)} warning(s). It is strongly "
+                    "suggested you assign an error handler with story.on_error. "
+                    f"The first issue was: {first_issue}"
+                )
 
                 raise StoryException(message)
 
@@ -218,9 +246,81 @@ class Story(InkObject):
     def has_warning(self) -> bool:
         return self.state.has_warning
 
+    def increment_content_pointer(self) -> bool:
+        successful_increment = True
+
+        pointer = self.state.call_stack.current_element.current_pointer
+        pointer.index += 1
+
+        while pointer.index >= len(pointer.container.content):
+            successful_increment = False
+
+            next_ancestor = pointer.container.parent
+            if not isinstance(next_ancestor, Container):
+                break
+
+            try:
+                next_ancestor_index = next_ancestor.content.index(pointer.container)
+            except ValueError:
+                break
+
+            pointer = Pointer(next_ancestor, next_ancestor_index)
+            pointer.index += 1
+
+            successful_increment = True
+
+        if not successful_increment:
+            pointer = None
+
+        self.state.call_stack.current_element.current_pointer = pointer
+
+        return successful_increment
+
     @property
     def main_content_container(self) -> Container | None:
         return self._main_content_container
+
+    def next_content(self):
+        self.state.previous_pointer = self.state.current_pointer
+
+        if self.state.diverted_pointer:
+            self.state.current_pointer = self.state.diverted_pointer
+            self.state.diverted_pointer = None
+
+            self.visit_changed_containers_due_to_divert()
+
+            # diverted location has valid content
+            if self.state.current_pointer:
+                return
+
+            # otherwise, if divert location doesn't have valid content drop down
+            # and attempt to increment
+            # this can happen if the diverted path is intentionally jumping to
+            # the end of the container
+
+        successful_pointer_increment = self.increment_content_pointer()
+
+        # ran out of content, try auto-exit
+        if not successful_pointer_increment:
+            did_pop = False
+
+            if self.state.call_stack.can_pop(PushPopType.Function):
+                self.state.pop_callstack(PushPopType.Function)
+
+                # this pop was due to a function that didn't return anything
+                if self.state.in_expression_eval:
+                    self.state.push_eval_stack(Void())
+
+                did_pop = True
+            elif self.state.call_stack.can_pop_thread:
+                self.state.call_stack.pop_thread()
+
+                did_pop = True
+            else:
+                self.state.try_exit_function_eval_from_game()
+
+            if did_pop and self.state.current_pointer:
+                self.next_content()
 
     def observe(self, name: str, f: t.Callable[[str, t.Any], None] = None):
         if name not in self.state.variables_state:
@@ -239,6 +339,230 @@ class Story(InkObject):
             return f
 
         return f and decorator(f) or decorator
+
+    def perform_logic_and_flow_control(self, object: InkObject) -> bool:
+        logger.debug("perform_logic_and_flow_control: %s", object)
+
+        if isinstance(object, Divert):
+            if object.is_conditional:
+                condition_value = self.state.pop_eval_stack()
+
+                if not self.is_truthy(condition_value):
+                    return True
+
+            if object.has_variable_target:
+                name = object.variable_divert_name
+                content = self.state.variables_state.get(name)
+
+                if content is None:
+                    self.add_error(
+                        "Tried to divert using a target to a variable that "
+                        f"could not be found: {name}"
+                    )
+                elif not isinstance(content, DivertTargetValue):
+                    self.add_error(
+                        f"Tried to divert to a target from a variable, but the "
+                        f"variable '{name}' didn't contain a divert target, it "
+                        f"contained '{content}'"
+                    )
+
+                self.state.diverted_pointer = self.pointer_at_path(content.target_path)
+            elif object.is_external:
+                self.call_external_function(
+                    object.target_path_string, object.external_args
+                )
+                return True
+            else:
+                self.state.diverted_pointer = object.target_pointer
+
+            if object.pushes_to_stack:
+                self.state.call_stack.push(
+                    object.stack_push_type,
+                    output_stream_length_with_pushed=len(self.state.output_stream),
+                )
+
+            if not self.state.diverted_pointer and not object.is_external:
+                if object and object.debug.source:
+                    self.add_error(
+                        f"Divert target doesn't exist: {object.debug.source}"
+                    )
+                else:
+                    self.add_error(f"Divert resolution failed: {object}")
+
+            return True
+
+        elif isinstance(object, ControlCommand):
+            if object.type == ControlCommand.CommandType.EvalStart:
+                assert (
+                    not self.state.in_expression_eval
+                ), "Already in expression evaluation"
+                self.state.in_expression_eval = True
+            elif object.type == ControlCommand.CommandType.EvalEnd:
+                assert self.state.in_expression_eval, "Not in expression evaluation"
+                self.state.in_expression_eval = False
+            elif object.type == ControlCommand.CommandType.EvalOutput:
+                if self.state.eval_stack:
+                    output = self.state.pop_eval_stack()
+                    if output:
+                        text = StringValue(output)
+                        self.state.push_to_output_stream(text)
+            elif object.type == ControlCommand.CommandType.NoOp:
+                pass
+            elif object.type == ControlCommand.CommandType.Duplicate:
+                self.state.push_eval_stack(self.state.peek_eval_stack())
+            elif object.type == ControlCommand.CommandType.PopEvaluatedValue:
+                self.state.pop_eval_stack()
+            elif object.type in (
+                ControlCommand.CommandType.PopFunction,
+                ControlCommand.CommandType.PopTunnel,
+            ):
+                if object.type == ControlCommand.CommandType.PopFunction:
+                    pop_type = PushPopType.Function
+                elif object.type == ControlCommand.CommandType.PopTunnel:
+                    pop_type = PushPopType.Tunnel
+
+                override_tunnel_return_target = None
+                if pop_type == PushPopType.Tunnel:
+                    value = self.state.pop_eval_stack()
+                    if isinstance(value, DivertTargetvalue):
+                        override_tunnel_return_target = value
+                    else:
+                        assert (
+                            value == Void()
+                        ), "Expected void if ->-> doesn't override target"
+
+                if self.state.try_exit_function_evaluation_from_game():
+                    pass
+                elif (
+                    self.state.call_stack.current_element.type != pop_type
+                    or self.state.call_stack.can_pop()
+                ):
+                    names = {
+                        PushPopType.Function: "function return statement (~ return)",
+                        PushPopType.Tunnel: "tunnel onwards statement (->->)",
+                    }
+                    expected = names[self.state.call_stack.current_element.type]
+                    if self.state.call_stack.can_pop():
+                        expected = "end of flow (-> END or choice)"
+
+                    message = f"Found {names[pop_type]}, when expected {expected}"
+                    self.add_error(message)
+                else:
+                    self.state.pop_callstack()
+                if override_tunnel_return_target:
+                    self.state.diverted_pointer = override_tunnel_return_target
+            elif object.type == ControlCommand.CommandType.BeginString:
+                self.state.push_to_output_stream(object)
+                assert (
+                    self.state.in_expression_eval
+                ), "Expected to be in an expression evaluating a string"
+                self.state.in_expression_eval = False
+            elif object.type == ControlCommand.CommandType.BeginTag:
+                self.state.push_to_output_stream(object)
+            elif object.type == ControlCommand.CommandType.EndTag:
+                if self.state.in_string_eval:
+                    content_stack_for_tag = []
+                    output_count_consumed = 0
+
+                    for content in self.state.output_stream:
+                        output_count_consumed += 1
+
+                        if isinstance(content, ControlCommand):
+                            if not content.type == ControlCommand.CommandType.BeginTag:
+                                self.add_error(
+                                    "Unexpected ControlCommand while extracting "
+                                    f"tag from choice: {content.type.value}"
+                                )
+                            break
+
+                        if isinstance(content, StringValue):
+                            content_stack_for_tag.append(content)
+
+                    self.state.pop_from_output_stream(output_count_consumed)
+
+                    text = "".join(c.value for c in content_stack_for_tag)
+                    choice_tag = Tag(self.state.clean_output_whitespace(text))
+
+                    self.state.push_eval_stack(choice_tag)
+                else:
+                    self.state.push_to_output_stream(object)
+            elif object.type == ControlCommand.CommandType.EndString:
+                raise Exception(object.type)
+            elif object.type == ControlCommand.CommandType.ChoiceCount:
+                raise Exception(object.type)
+            elif object.type == ControlCommand.CommandType.Turns:
+                raise Exception(object.type)
+            elif object.type == ControlCommand.CommandType.TurnsSince:
+                raise Exception(object.type)
+            elif object.type == ControlCommand.CommandType.ReadCount:
+                raise Exception(object.type)
+            elif object.type == ControlCommand.CommandType.Random:
+                raise Exception(object.type)
+            elif object.type == ControlCommand.CommandType.SeedRandom:
+                raise Exception(object.type)
+            elif object.type == ControlCommand.CommandType.VisitIndex:
+                raise Exception(object.type)
+            elif object.type == ControlCommand.CommandType.SequenceShuffleIndex:
+                raise Exception(object.type)
+            elif object.type == ControlCommand.CommandType.StartThread:
+                raise Exception(object.type)
+            elif object.type == ControlCommand.CommandType.Done:
+                raise Exception(object.type)
+            elif object.type == ControlCommand.CommandType.End:
+                raise Exception(object.type)
+            elif object.type == ControlCommand.CommandType.ListFromInt:
+                raise Exception(object.type)
+            elif object.type == ControlCommand.CommandType.ListRange:
+                raise Exception(object.type)
+            elif object.type == ControlCommand.CommandType.ListRandom:
+                raise Exception(object.type)
+            else:
+                self.add_error(f"Unhandled control command: {object.type}")
+
+            return True
+
+        elif isinstance(object, VariableAssignment):
+            value = self.state.pop_eval_stack()
+
+            # when in temporary evaluation, don't create new variables purely
+            # within the temporary content, but attempt to create them globally
+
+            self.state.variables_state.assign(object, value)
+
+            return True
+
+        elif isinstance(object, VariableReference):
+            # Explicit read count value
+            if object.path_for_count:
+                container = object.container_for_count
+                count = self.state.visit_count_for_container(container)
+                value = IntValue(count)
+
+            # Normal variable reference
+            else:
+                value = self.state.variables_state.get_variable_with_name(object.name)
+
+                if value is None:
+                    self.add_warning(
+                        f"Variable not found: '{object.name}'. Using default value of 0 "
+                        "(false). This can happen with temporary variables if "
+                        "the declaration hasn't yet been hit. Globals are always "
+                        "given a default value on load if a value doesn't exist "
+                        "in the save state."
+                    )
+
+            self.state.push_eval_stack(value)
+
+            return True
+
+        elif isinstance(object, NativeFunctionCall):
+            params = self.state.pop_eval_stack(object.number_of_parameters)
+            result = object.call(params)
+            self.state.push_eval_stack(result)
+            return True
+
+        # No control content, must be ordinary content
+        return True
 
     @contextmanager
     def profile(self):
@@ -269,6 +593,10 @@ class Story(InkObject):
     def start_profiling(self):
         self._profiler = Profiler()
 
+    def state_snapshot(self):
+        self._state_snapshot_at_newline = self.state
+        self.state = self.state.copy_and_start_patching()
+
     def step(self):
         should_add_to_stream = True
 
@@ -279,7 +607,7 @@ class Story(InkObject):
 
         # step to first element of content in container
         container = pointer.resolve()
-        while container:
+        while isinstance(container, Container):
             # mark container as being entered
             self.visit_container(container, at_start=True)
 
@@ -296,7 +624,7 @@ class Story(InkObject):
             self._profiler.step(self.state.call_stack)
 
         current_object = pointer.resolve()
-        is_logic_or_flow_control = self.perform_login_and_flow_control(current_object)
+        is_logic_or_flow_control = self.perform_logic_and_flow_control(current_object)
 
         # has flow eneded?
         if not self.state.current_pointer:
@@ -354,10 +682,12 @@ class Story(InkObject):
         self.state._switch_to_default_flow()
 
     def try_follow_default_invisible_choice(self) -> bool:
+        logger.debug("try_follow_default_invisible_choice")
+
         choices = self.state.current_choices
 
         invisible_choices = [c for c in choices if c.is_invisible_default]
-        if not invisible_choices and len(choices) > len(invisible_choices):
+        if not invisible_choices or len(choices) > len(invisible_choices):
             return False
 
         choice = invisible_choices[0]
@@ -421,3 +751,58 @@ class Story(InkObject):
                     message += " (ink function fallbacks disabled)"
 
                 self.add_error(message)
+
+    def visit_container(self, container: Container, at_start: bool):
+        logger.debug("Visited container %s", container)
+
+        if not container.count_at_start_only or at_start:
+            if container.visits_should_be_counted:
+                self.state.increment_visit_count_for_container(container)
+
+            if container.turn_index_should_be_counted:
+                self.state.record_turn_index_visit_to_container(container)
+
+    def visit_changed_containers_due_to_divert(self):
+        previous_pointer = self.state.previous_pointer
+        pointer = self.state.current_pointer
+
+        if not pointer or pointer.index == -1:
+            return
+
+        pointer = pointer.copy()
+        if previous_pointer:
+            previous_pointer = previous_pointer.copy()
+
+        self._prev_containers = []
+        if previous_pointer:
+            ancestor = previous_pointer.resolve()
+            if not isinstance(ancestor, Container):
+                ancestor = previous_pointer.container
+            while isinstance(ancestor, Container):
+                self._prev_containers.append(ancestor)
+                ancestor = ancestor.parent
+
+        current_child = pointer.resolve()
+        if not current_child:
+            return
+
+        current_ancestor = current_child.parent
+        all_children_entered_at_start = True
+
+        while isinstance(current_ancestor, Container) and (
+            current_ancestor not in self._prev_containers
+            or current_ancestor.count_at_start_only
+        ):
+            entering_at_start = (
+                len(current_ancestor.content) > 0
+                and current_child == current_ancestor.content[0]
+                and all_children_entered_at_start
+            )
+
+            if not entering_at_start:
+                all_children_entered_at_start = False
+
+            self.visit_container(current_ancestor, entering_at_start)
+
+            current_child = current_ancestor
+            current_ancestor = current_ancestor.parent
