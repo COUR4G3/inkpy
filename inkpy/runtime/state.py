@@ -14,6 +14,7 @@ from .value import ListValue, StringValue
 if t.TYPE_CHECKING:
     from .container import Container
     from .object import InkObject
+    from .path import Path
     from .story import Story
 
 
@@ -195,7 +196,10 @@ class State:
 
         return False
 
-    def pop_eval_stack(self, count: int = 1):
+    def peek_eval_stack(self) -> "InkObject":
+        return self.eval_stack[-1]
+
+    def pop_eval_stack(self, count: int = 1) -> t.Union["InkObject", list["InkObject"]]:
         if count > len(self.eval_stack):
             raise RuntimeError("Trying to pop too many objects from evaluation stack")
 
@@ -320,6 +324,18 @@ class State:
         self.output_stream.clear()
         if objs:
             self.output_stream.extend(objs)
+
+    def set_chosen_path(self, path: "Path", incrementing_turn_index: bool):
+        self.current_flow.current_choices.clear()
+
+        new_pointer = self.story.pointer_at_path(path)
+        if new_pointer and new_pointer.index == -1:
+            new_pointer.index = 0
+
+        self.current_pointer = new_pointer
+
+        if incrementing_turn_index:
+            self.current_turn_index += 1
 
     def _switch_flow(self, name: str):
         if not self.named_flows:

@@ -13,6 +13,7 @@ from .exceptions import StoryException
 from .list_definition import ListDefinition
 from .native_function_call import NativeFunctionCall
 from .object import InkObject
+from .path import Path
 from .pointer import Pointer
 from .profiler import Profiler
 from .push_pop import PushPopType
@@ -82,14 +83,19 @@ class Story(InkObject):
     def can_continue(self) -> bool:
         return self.state.can_continue
 
-    def continue_(self) -> str:
-        self._continue()
-        return self.current_text
+    def choose_path(self, path: Path, incrementing_turn_index: bool = True):
+        self.state.set_chosen_path(path, incrementing_turn_index)
+        self.visit_changed_containers_due_to_divert()
 
-    def _continue(self):
+    def continue_(self) -> str:
         if not self._has_validated_externals:
             self.validate_external_bindings()
 
+        self._continue()
+
+        return self.current_text
+
+    def _continue(self):
         if self._profiler:
             self._profiler.pre_continue()
 
@@ -229,7 +235,7 @@ class Story(InkObject):
         if self._profiler:
             self._profiler.post_snapshot()
 
-        return True
+        return False
 
     @property
     def current_text(self):
@@ -562,7 +568,7 @@ class Story(InkObject):
             return True
 
         # No control content, must be ordinary content
-        return True
+        return False
 
     @contextmanager
     def profile(self):
@@ -572,6 +578,39 @@ class Story(InkObject):
             yield
         finally:
             self.end_profiling()
+
+    def pointer_at_path(self, path: Path) -> t.Optional[Pointer]:
+        if len(path) == 0:
+            return
+
+        path_length_to_use = len(path)
+
+        if path.last_component.is_index:
+            path_length_to_use = len(path) - 1
+            result = self.main_content_container.content_at_path(
+                path, length=path_length_to_use
+            )
+            pointer = Pointer(result.container, path.last_component.index)
+        else:
+            result = self.main_content_container.content_at_path(path)
+            pointer = Pointer(result.container, -1)
+
+        if (
+            not result.obj
+            or result.obj == self.main_content_container
+            and path_length_to_use > 0
+        ):
+            self.add_error(
+                f"Failed to find content at path '{path}', and no approximation "
+                "of it was possible."
+            )
+        elif result.approximate:
+            self.add_warning(
+                f"Failed to find content at path '{path}', so it was approximated "
+                f"to: '{result.obj.path}'"
+            )
+
+        return pointer
 
     def remove_flow(self, name: str):
         self.state._remove_flow(name)
@@ -583,7 +622,16 @@ class Story(InkObject):
         self.state.reset_errors()
 
     def reset_globals(self):
-        return
+        if "global decl" in self._main_content_container.named_content:
+            original_pointer = self.state.current_pointer
+
+            self.choose_path(Path("global decl"), incrementing_turn_index=False)
+
+            self._continue()
+
+            self.state.current_pointer = original_pointer
+
+        self.state.variables_state.snapshot_default_variables()
 
     def reset_state(self):
         self.state = State(self)
@@ -662,10 +710,10 @@ class Story(InkObject):
                     current_object.variable_name, index
                 )
 
-                if self.state.in_expression_eval:
-                    self.state.push_eval_stack(current_object)
-                else:
-                    self.state.push_to_output_stream(current_object)
+            if self.state.in_expression_eval:
+                self.state.push_eval_stack(current_object)
+            else:
+                self.state.push_to_output_stream(current_object)
 
         self.next_content()
 

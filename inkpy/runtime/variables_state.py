@@ -6,6 +6,7 @@ from .call_stack import CallStack
 from .list_definition import ListDefinition
 from .object import InkObject
 from .value import ListValue, VariablePointerValue
+from .variable_assignment import VariableAssignment
 
 
 class VariablesState:
@@ -21,6 +22,34 @@ class VariablesState:
         self.call_stack = call_stack
         self.global_variables: dict[str, InkObject] = {}
         self.list_definitions = list_definitions
+
+    def assign(self, assignment: VariableAssignment, value: InkObject):
+        name = assignment.variable_name
+        index = -1
+
+        if assignment.is_new_declaration:
+            set_global = assignment.is_global
+        else:
+            set_global = self.global_variable_exists_with_name(name)
+
+        if assignment.is_new_declaration:
+            if isinstance(value, VariablePointerValue):
+                value = self.resolve_variable_pointer(value)
+        else:
+            existing_pointer = True
+            while existing_pointer:
+                existing_pointer = self.get_raw_variable_with_name(name, index)
+                if existing_pointer:
+                    name = existing_pointer.variable_name
+                    index = existing_pointer.index
+                    set_global = index == 0
+
+        if set_global:
+            self.set_global(name, value)
+        else:
+            self.call_stack.set_temporary_variable(
+                name, value, assignment.is_new_declaration, index
+            )
 
     @property
     def batch_observing_variable_changes(self) -> bool:
@@ -65,6 +94,9 @@ class VariablesState:
 
         return value
 
+    def global_variable_exists_with_name(self, name: str) -> bool:
+        return name in self.global_variables or name in self.default_global_variables
+
     def observe_variable_change(self, callback: t.Callable):
         self.variable_changed_event_callbacks.append(callback)
 
@@ -79,6 +111,9 @@ class VariablesState:
             self._changed_variables_for_batch_ops.add(name)
         else:
             self.variable_changed_event(name, value)
+
+    def snapshot_default_variables(self):
+        return
 
     def variable_changed_event(self, name: str, value: InkObject):
         for callback in self.variable_changed_event_callbacks:

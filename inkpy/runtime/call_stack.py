@@ -33,8 +33,8 @@ class CallStack:
     class Thread:
         def __init__(self):
             self.callstack: list[CallStack.Element] = []
-            self.index: int
-            self.previous_pointer: Pointer
+            self.index: int = -1
+            self.previous_pointer: t.Optional[Pointer] = None
 
         def copy(self):
             copy = CallStack.Thread()

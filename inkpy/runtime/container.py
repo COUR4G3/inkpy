@@ -25,6 +25,9 @@ class Container(InkObject):
 
         super().__init__()
 
+    def __str__(self):
+        return f"Container (name={self.name}) []"
+
     def add_content(self, value: list[InkObject] | InkObject):
         if isinstance(value, list):
             for content in value:
@@ -51,15 +54,15 @@ class Container(InkObject):
         self.add_content(value)
 
     def content_at_path(
-        self, path: Path, start: int = 0, end: int = -1
+        self, path: Path, start: int = 0, length: int = -1
     ) -> SearchResult:
-        if end == -1:
-            end = len(path)
+        if length == -1:
+            length = len(path)
 
         result = SearchResult(approximate=False)
 
         current_container = current_object = self
-        for component in path.components[start:end]:
+        for component in path.components[start:length]:
             if not current_container:
                 result.approximate = True
                 break
