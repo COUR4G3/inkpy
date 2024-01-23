@@ -26,7 +26,7 @@ class Container(InkObject):
         super().__init__()
 
     def __str__(self):
-        return f"Container (name={self.name}) []"
+        return f"[name={self.name}, [...], {{...}}]"
 
     def add_content(self, value: list[InkObject] | InkObject):
         if isinstance(value, list):

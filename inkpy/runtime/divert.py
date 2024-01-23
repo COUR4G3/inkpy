@@ -50,9 +50,11 @@ class Divert(InkObject):
 
     @property
     def target_path(self) -> t.Optional[Path]:
-        target_object = self.target_pointer and self.target_pointer.resolve()
-        if target_object:
-            self._target_path = target_object.path
+        if self._target_path and self._target_path.is_relative:
+            target_object = self.target_pointer.resolve()
+            if target_object:
+                self._target_path = target_object.path
+        return self._target_path
 
     @target_path.setter
     def target_path(self, path: t.Optional[Path]):

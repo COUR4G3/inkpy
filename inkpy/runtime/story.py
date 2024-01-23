@@ -19,12 +19,12 @@ from .profiler import Profiler
 from .push_pop import PushPopType
 from .state import State
 from .tag import Tag
-from .value import VariablePointerValue
+from .value import DivertTargetValue, Value, VariablePointerValue
 from .variable_assignment import VariableAssignment
 from .variable_reference import VariableReference
 
 
-logger = logging.getLogger()
+logger = logging.getLogger(__name__)
 
 
 class ExternalFunctionDefinition:
@@ -282,6 +282,20 @@ class Story(InkObject):
 
         return successful_increment
 
+    def is_truthy(self, object: InkObject) -> bool:
+        truthy = False
+        if isinstance(object, DivertTargetValue):
+            self.add_error(
+                f"Shouldn't use a divert target (to '{object.target_path}') as a "
+                "conditional value. Did you intend a function call 'likeThis()' "
+                "or a read count check 'likeThis'? (no arrows)"
+            )
+            return False
+        elif isinstance(object, Value):
+            return bool(object)
+
+        return truthy
+
     @property
     def main_content_container(self) -> Container | None:
         return self._main_content_container
@@ -492,36 +506,36 @@ class Story(InkObject):
                     self.state.push_eval_stack(choice_tag)
                 else:
                     self.state.push_to_output_stream(object)
-            elif object.type == ControlCommand.CommandType.EndString:
-                raise Exception(object.type)
-            elif object.type == ControlCommand.CommandType.ChoiceCount:
-                raise Exception(object.type)
-            elif object.type == ControlCommand.CommandType.Turns:
-                raise Exception(object.type)
-            elif object.type == ControlCommand.CommandType.TurnsSince:
-                raise Exception(object.type)
-            elif object.type == ControlCommand.CommandType.ReadCount:
-                raise Exception(object.type)
-            elif object.type == ControlCommand.CommandType.Random:
-                raise Exception(object.type)
-            elif object.type == ControlCommand.CommandType.SeedRandom:
-                raise Exception(object.type)
-            elif object.type == ControlCommand.CommandType.VisitIndex:
-                raise Exception(object.type)
-            elif object.type == ControlCommand.CommandType.SequenceShuffleIndex:
-                raise Exception(object.type)
-            elif object.type == ControlCommand.CommandType.StartThread:
-                raise Exception(object.type)
-            elif object.type == ControlCommand.CommandType.Done:
-                raise Exception(object.type)
+            # elif object.type == ControlCommand.CommandType.EndString:
+            #     raise Exception(object.type)
+            # elif object.type == ControlCommand.CommandType.ChoiceCount:
+            #     raise Exception(object.type)
+            # elif object.type == ControlCommand.CommandType.Turns:
+            #     raise Exception(object.type)
+            # elif object.type == ControlCommand.CommandType.TurnsSince:
+            #     raise Exception(object.type)
+            # elif object.type == ControlCommand.CommandType.ReadCount:
+            #     raise Exception(object.type)
+            # elif object.type == ControlCommand.CommandType.Random:
+            #     raise Exception(object.type)
+            # elif object.type == ControlCommand.CommandType.SeedRandom:
+            #     raise Exception(object.type)
+            # elif object.type == ControlCommand.CommandType.VisitIndex:
+            #     raise Exception(object.type)
+            # elif object.type == ControlCommand.CommandType.SequenceShuffleIndex:
+            #     raise Exception(object.type)
+            # elif object.type == ControlCommand.CommandType.StartThread:
+            #     raise Exception(object.type)
+            # elif object.type == ControlCommand.CommandType.Done:
+            #     raise Exception(object.type)
             elif object.type == ControlCommand.CommandType.End:
-                raise Exception(object.type)
-            elif object.type == ControlCommand.CommandType.ListFromInt:
-                raise Exception(object.type)
-            elif object.type == ControlCommand.CommandType.ListRange:
-                raise Exception(object.type)
-            elif object.type == ControlCommand.CommandType.ListRandom:
-                raise Exception(object.type)
+                self.state.force_end()
+            # elif object.type == ControlCommand.CommandType.ListFromInt:
+            #     raise Exception(object.type)
+            # elif object.type == ControlCommand.CommandType.ListRange:
+            #     raise Exception(object.type)
+            # elif object.type == ControlCommand.CommandType.ListRandom:
+            #     raise Exception(object.type)
             else:
                 self.add_error(f"Unhandled control command: {object.type}")
 
@@ -642,6 +656,7 @@ class Story(InkObject):
         self._profiler = Profiler()
 
     def state_snapshot(self):
+        raise NotImplementedError()
         self._state_snapshot_at_newline = self.state
         self.state = self.state.copy_and_start_patching()
 
@@ -672,6 +687,7 @@ class Story(InkObject):
             self._profiler.step(self.state.call_stack)
 
         current_object = pointer.resolve()
+
         is_logic_or_flow_control = self.perform_logic_and_flow_control(current_object)
 
         # has flow eneded?
@@ -801,7 +817,7 @@ class Story(InkObject):
                 self.add_error(message)
 
     def visit_container(self, container: Container, at_start: bool):
-        logger.debug("Visited container %s", container)
+        logger.debug("visit_container: %s", container)
 
         if not container.count_at_start_only or at_start:
             if container.visits_should_be_counted:

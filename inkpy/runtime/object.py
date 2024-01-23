@@ -72,21 +72,18 @@ class InkObject:
                 components = []
 
                 child = self
-                container = (
-                    isinstance(child.parent, t.Type["Container"]) and child.parent
-                )
+                container = child.parent
 
-                while container:
-                    if child.name:
+                while type(container).__name__ == "Container":
+                    if getattr(child, "name", None):
                         components.insert(0, Path.Component(child.name))
                     else:
-                        components.insert(0, Path.Component(child.content.index(child)))
+                        components.insert(
+                            0, Path.Component(container.content.index(child))
+                        )
 
                     child = container
-                    container = (
-                        isinstance(container.parent, t.Type["Container"])
-                        and container.parent
-                    )
+                    container = container.parent
 
                 self._path = Path(components)
 
@@ -104,7 +101,7 @@ class InkObject:
                     self.parent
                 ), "Can't resolve relative path because we don't have a parent"
 
-                nearest_container = type(self) == "Container" and self.parent
+                nearest_container = self.parent
                 assert nearest_container, "Expected parent to be a container"
                 assert path.components[0].is_parent
 

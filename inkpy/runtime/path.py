@@ -81,8 +81,17 @@ class Path:
         else:
             raise TypeError(f"Cannot append '{type(other)}' to path")
 
+    def __iter__(self):
+        return iter(self.components)
+
     def __len__(self) -> int:
         return len(self.components)
+
+    def __str__(self):
+        path_string = ".".join(str(c) for c in self.components)
+        if self.is_relative:
+            path_string = f".{path_string}"
+        return path_string
 
     def __truediv__(self, other: t.Union["Path", "Path.Component"]) -> "Path":
         if isinstance(other, Path):
@@ -120,3 +129,12 @@ class Path:
             p.components.append(component)
 
         return p
+
+    @property
+    def tail(self) -> "Path":
+        if len(self.components) >= 2:
+            return Path(self.components[1:])
+        else:
+            path = Path()
+            path.is_relative = True
+            return path

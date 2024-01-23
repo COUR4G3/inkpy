@@ -354,3 +354,76 @@ class State:
 
     def _switch_to_default_flow(self):
         self._switch_flow(self.DEFAULT_FLOW_NAME)
+
+    def try_exit_function_eval_from_game(self) -> bool:
+        if (
+            self.call_stack.current_element.type
+            == PushPopType.FunctionEvaluationFromGame
+        ):
+            self.current_pointer = None
+            self.did_safe_exit = True
+            return True
+
+        return False
+
+    def try_splitting_head_tail_whitespace(
+        self, text: StringValue
+    ) -> list[StringValue]:
+        head_first_newline_idx = -1
+        head_last_newline_idx = -1
+
+        for i, c in enumerate(text.value):
+            if c == "\n":
+                if head_first_newline_idx == -1:
+                    head_first_newline_idx = i
+                head_last_newline_idx = i
+            elif c == " " or c == "\t":
+                continue
+            else:
+                break
+
+        tail_last_newline_idx = -1
+        tail_first_newline_idx = -1
+
+        for i, c in reversed(list(enumerate(text.value))):
+            if c == "\n":
+                if tail_last_newline_idx == -1:
+                    tail_last_newline_idx = i
+                tail_first_newline_idx = i
+            elif c == " " or c == "\t":
+                continue
+            else:
+                break
+
+        if head_first_newline_idx == -1 and tail_last_newline_idx == -1:
+            return
+
+        texts = []
+        inner_start = 0
+        inner_end = len(text.value)
+
+        if head_first_newline_idx != -1:
+            if head_first_newline_idx > 0:
+                leading_spaces = StringValue(text.value[:head_first_newline_idx])
+                texts.append(leading_spaces)
+            texts.append(StringValue("\n"))
+            inner_start = head_last_newline_idx + 1
+
+        if tail_last_newline_idx != -1:
+            inner_end = tail_last_newline_idx
+
+        if inner_end > inner_start:
+            inner_text = text.value[inner_start:inner_end]
+            texts.append(inner_text)
+
+        if (
+            tail_last_newline_idx != -1
+            and tail_first_newline_idx > head_last_newline_idx
+        ):
+            texts.append(StringValue("\n"))
+            if tail_last_newline_idx < len(text.value) - 1:
+                num_spaces = len(text.value) - tail_last_newline_idx - 1
+                trailing_spaces = StringValue(text.value[tail_last_newline_idx + 1 :])
+                texts.append(trailing_spaces)
+
+        return texts
