@@ -5,6 +5,7 @@ from collections import defaultdict
 from contextlib import contextmanager
 
 from ..parser.json import JsonParser
+from .choice import Choice
 from .choice_point import ChoicePoint
 from .container import Container
 from .control_command import ControlCommand
@@ -19,9 +20,10 @@ from .profiler import Profiler
 from .push_pop import PushPopType
 from .state import State
 from .tag import Tag
-from .value import DivertTargetValue, Value, VariablePointerValue
+from .value import DivertTargetValue, StringValue, Value, VariablePointerValue
 from .variable_assignment import VariableAssignment
 from .variable_reference import VariableReference
+from .void import Void
 
 
 logger = logging.getLogger(__name__)
@@ -258,6 +260,12 @@ class Story(InkObject):
         pointer = self.state.call_stack.current_element.current_pointer
         pointer.index += 1
 
+        logger.debug(
+            "increment_content_container:before:%s[%d]",
+            pointer.container,
+            pointer.index - 1,
+        )
+
         while pointer.index >= len(pointer.container.content):
             successful_increment = False
 
@@ -280,6 +288,13 @@ class Story(InkObject):
 
         self.state.call_stack.current_element.current_pointer = pointer
 
+        if pointer:
+            logger.debug(
+                "increment_content_container:after:%s[%d]", pointer.container, pointer.index
+            )
+        else:
+            logger.debug("increment_content_container:after:None")
+
         return successful_increment
 
     def is_truthy(self, object: InkObject) -> bool:
@@ -301,10 +316,12 @@ class Story(InkObject):
         return self._main_content_container
 
     def next_content(self):
+        logger.debug("next_content")
         self.state.previous_pointer = self.state.current_pointer
 
         if self.state.diverted_pointer:
-            self.state.current_pointer = self.state.diverted_pointer
+            logger.debug("next_content:divereted:%s", self.state.diverted_pointer)
+            self.state.current_pointer = self.state.diverted_pointer.copy()
             self.state.diverted_pointer = None
 
             self.visit_changed_containers_due_to_divert()
@@ -372,7 +389,7 @@ class Story(InkObject):
 
             if object.has_variable_target:
                 name = object.variable_divert_name
-                content = self.state.variables_state.get(name)
+                content = self.state.variables_state.get_variable_with_name(name)
 
                 if content is None:
                     self.add_error(
@@ -424,7 +441,7 @@ class Story(InkObject):
                 if self.state.eval_stack:
                     output = self.state.pop_eval_stack()
                     if output:
-                        text = StringValue(output)
+                        text = StringValue(str(output))
                         self.state.push_to_output_stream(text)
             elif object.type == ControlCommand.CommandType.NoOp:
                 pass
@@ -444,18 +461,18 @@ class Story(InkObject):
                 override_tunnel_return_target = None
                 if pop_type == PushPopType.Tunnel:
                     value = self.state.pop_eval_stack()
-                    if isinstance(value, DivertTargetvalue):
+                    if isinstance(value, DivertTargetValue):
                         override_tunnel_return_target = value
                     else:
                         assert (
                             value == Void()
                         ), "Expected void if ->-> doesn't override target"
 
-                if self.state.try_exit_function_evaluation_from_game():
+                if self.state.try_exit_function_eval_from_game():
                     pass
                 elif (
                     self.state.call_stack.current_element.type != pop_type
-                    or self.state.call_stack.can_pop()
+                    or not self.state.call_stack.can_pop()
                 ):
                     names = {
                         PushPopType.Function: "function return statement (~ return)",
@@ -506,8 +523,34 @@ class Story(InkObject):
                     self.state.push_eval_stack(choice_tag)
                 else:
                     self.state.push_to_output_stream(object)
-            # elif object.type == ControlCommand.CommandType.EndString:
-            #     raise Exception(object.type)
+            elif object.type == ControlCommand.CommandType.EndString:
+                content_stack = []
+                content_to_retain = []
+
+                output_count_consumed = 0
+                for content in reversed(self.state.output_stream):
+                    output_count_consumed += 1
+
+                    if (
+                        isinstance(content, ControlCommand)
+                        and content.type == ControlCommand.CommandType.BeginString
+                    ):
+                        break
+
+                    if isinstance(content, Tag):
+                        content_to_retain.append(content)
+                    elif isinstance(content, StringValue):
+                        content_stack.append(content)
+
+                self.state.pop_from_output_stream(output_count_consumed)
+
+                for tag in content_to_retain:
+                    self.state.push_to_output_stream(tag)
+
+                text = "".join(c.value for c in content_stack)
+                self.state.in_expression_eval = True
+                self.state.push_eval_stack(StringValue(text))
+
             # elif object.type == ControlCommand.CommandType.ChoiceCount:
             #     raise Exception(object.type)
             # elif object.type == ControlCommand.CommandType.Turns:
@@ -526,8 +569,13 @@ class Story(InkObject):
             #     raise Exception(object.type)
             # elif object.type == ControlCommand.CommandType.StartThread:
             #     raise Exception(object.type)
-            # elif object.type == ControlCommand.CommandType.Done:
-            #     raise Exception(object.type)
+            elif object.type == ControlCommand.CommandType.Done:
+                if self.state.call_stack.can_pop_thread:
+                    self.state.call_stack.pop_thread()
+                else:
+                    self.did_safe_exit = True
+                    self.state.current_pointer = None
+
             elif object.type == ControlCommand.CommandType.End:
                 self.state.force_end()
             # elif object.type == ControlCommand.CommandType.ListFromInt:
@@ -583,6 +631,44 @@ class Story(InkObject):
 
         # No control content, must be ordinary content
         return False
+    
+    def process_choice(self, choice_point: ChoicePoint) -> Choice:
+        show_choice = True
+
+        if choice_point.has_condition:
+            value = self.state.pop_eval_stack()
+            if not self.is_truthy(value):
+                show_choie = False
+            
+        start_text = ""
+        choice_only_text = ""
+        tags = []
+
+        if choice_point.has_choice_only_content:
+            choice_only_text, tags = self.pop_choice_string_and_tags()
+
+        if choice_point.has_start_content:
+            start_text, tags = self.pop_choice_string_and_tags()
+
+        if choice_point.once_only:
+            visit_count = self.state.visit_count_for_container(choice_point.choice_target)
+            if visit_count > 0:
+                show_choice = False
+
+        if not show_choice:
+            return
+        
+        choice = Choice()
+        choice.target_path = choice_point.path_on_choice
+        choice.source_path = str(choice_point.path)
+        choice.is_invisible_default = choice_point.is_invisible_default
+        choice.tags = tags
+
+        choice.thread_at_generation = self.state.call_stack.fork_thread()
+
+        choice.text = (start_text + choice_only_text).strip(" ").strip("\t")
+
+        return choice
 
     @contextmanager
     def profile(self):

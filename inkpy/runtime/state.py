@@ -177,7 +177,7 @@ class State:
 
     @property
     def output_stream_contains_content(self) -> bool:
-        return
+        return any(isinstance(c, StringValue) for c in self.output_stream)
 
     def output_stream_dirty(self):
         self._output_stream_text_dirty = True
@@ -198,6 +198,12 @@ class State:
 
     def peek_eval_stack(self) -> "InkObject":
         return self.eval_stack[-1]
+
+    def pop_callstack(self, pop_type: t.Optional[PushPopType] = None):
+        if self.call_stack.current_element.type == PushPopType.Function:
+            self.trim_whitespace_from_function_end()
+
+        self.call_stack.pop(pop_type)
 
     def pop_eval_stack(self, count: int = 1) -> t.Union["InkObject", list["InkObject"]]:
         if count > len(self.eval_stack):
@@ -307,6 +313,20 @@ class State:
             self.output_stream.append(object)
             self.output_stream_dirty()
 
+    def record_turn_index_visit_to_container(self, container: "Container"):
+        path_string = str(container.path)
+        self.turn_indices[path_string] = self.current_turn_index
+
+    def remove_existing_glue(self):
+        for i in range(len(self.output_stream) - 1, -1, -1):
+            c = self.output_stream[i]
+            if isinstance(c, Glue):
+                self.output_stream.pop(i)
+            else:
+                break
+
+        self.output_stream_dirty()
+
     def _remove_flow(self, name: str):
         if name == self.DEFAULT_FLOW_NAME:
             raise Exception("Cannot destory the default flow")
@@ -354,6 +374,61 @@ class State:
 
     def _switch_to_default_flow(self):
         self._switch_flow(self.DEFAULT_FLOW_NAME)
+
+    def trim_newlines_from_output_stream(self):
+        remove_whitespace_from = -1
+
+        index = len(self.output_stream) - 1
+        while index >= 0:
+            content = self.output_stream[index]
+
+            if (
+                isinstance(content, ControlCommand)
+                or isinstance(content, StringValue)
+                and content.is_non_whitespace
+            ):
+                break
+            elif isinstance(content, StringValue) and content.is_newline:
+                remove_whitespace_from = index
+
+            index -= 1
+
+        if remove_whitespace_from >= 0:
+            i = remove_whitespace_from
+            while i < len(self.output_stream):
+                content = self.output_stream[i]
+                if isinstance(content, StringValue):
+                    self.output_stream.pop(i)
+                else:
+                    i += 1
+
+        self.output_stream_dirty()
+
+    def trim_whitespace_from_function_end(self):
+        assert self.call_stack.current_element.type == PushPopType.Function
+
+        function_start_point = (
+            self.call_stack.current_element.function_start_in_output_stream
+        )
+
+        if function_start_point == -1:
+            function_start_point = 0
+
+        for i in range(len(self.output_stream) - 1, function_start_point - 1, -1):
+            output = self.output_stream[i]
+            if i >= function_start_point:
+                break
+
+            if isinstance(output, ControlCommand):
+                break
+            elif not isinstance(output, StringValue):
+                continue
+
+            if output.is_newline or output.is_inline_whitespace:
+                self.output_stream.pop(i)
+                self.output_stream_dirty()
+            else:
+                break
 
     def try_exit_function_eval_from_game(self) -> bool:
         if (
@@ -413,7 +488,7 @@ class State:
             inner_end = tail_last_newline_idx
 
         if inner_end > inner_start:
-            inner_text = text.value[inner_start:inner_end]
+            inner_text = text.value[inner_start : inner_start + inner_end]
             texts.append(inner_text)
 
         if (
@@ -422,8 +497,17 @@ class State:
         ):
             texts.append(StringValue("\n"))
             if tail_last_newline_idx < len(text.value) - 1:
-                num_spaces = len(text.value) - tail_last_newline_idx - 1
                 trailing_spaces = StringValue(text.value[tail_last_newline_idx + 1 :])
                 texts.append(trailing_spaces)
 
         return texts
+
+    def visit_count_for_container(self, container: "Container") -> int:
+        if not container.visits_should_be_counted:
+            self.add_error(
+                f"Read count for target ({container.name} - on {container.debug}) unknown."
+            )
+
+        container_path_string = str(container.path)
+        count = self.visit_counts.get(container_path_string, 0)
+        return count

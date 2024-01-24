@@ -106,14 +106,13 @@ class VariablesState:
         ListValue.retain_list_origins_for_assignment(old_value, value)
 
         self.global_variables[name] = value
-
         if self.batch_observing_variable_changes:
             self._changed_variables_for_batch_ops.add(name)
         else:
             self.variable_changed_event(name, value)
 
     def snapshot_default_variables(self):
-        return
+        self.default_global_variables = self.global_variables.copy()
 
     def variable_changed_event(self, name: str, value: InkObject):
         for callback in self.variable_changed_event_callbacks:

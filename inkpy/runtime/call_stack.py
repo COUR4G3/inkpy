@@ -19,8 +19,8 @@ class CallStack:
             self.temporary_variables: dict[str, InkObject] = {}
             self.in_expression_eval = in_expression_eval
 
-            self.eval_stack_height_when_pushed: int
-            self.function_start_in_output_stream: int
+            self.eval_stack_height_when_pushed: int = -1
+            self.function_start_in_output_stream: int = -1
 
         def copy(self) -> "CallStack.Element":
             copy = CallStack.Element(

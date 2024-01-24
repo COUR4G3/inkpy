@@ -12,7 +12,7 @@ class Divert(InkObject):
         super().__init__()
 
         self.pushes_to_stack = type is not None
-        self.stack_push_type: PushPopType
+        self.stack_push_type: PushPopType = type
 
         self.external_args: int = 0
         self.is_conditional: bool = False
@@ -77,17 +77,11 @@ class Divert(InkObject):
         if not self._target_pointer:
             target_object = self.resolve_path(self._target_path).obj
             if self._target_path.last_component.is_index:
-                if isinstance(target_object.parent, Container):
-                    container = target_object.parent
-                else:
-                    container = None
+                container = target_object.parent
 
                 index = self._target_path.last_component.index
                 self._target_pointer = Pointer(container, index)
             else:
-                if isinstance(target_object, Container):
-                    self._target_pointer = Pointer.start_of(target_object)
-                else:
-                    self._target_pointer = Pointer.start_of(None)
+                self._target_pointer = Pointer.start_of(target_object)
 
         return self._target_pointer and self._target_pointer.copy() or None
