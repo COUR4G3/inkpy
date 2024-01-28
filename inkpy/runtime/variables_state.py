@@ -1,54 +1,73 @@
 import typing as t
 
-from collections import UserDict
-
 from .call_stack import CallStack
-from .list_definition import ListDefinition
+from .exceptions import StoryException
 from .object import InkObject
-from .value import ListValue, VariablePointerValue
+from .value import Value, VariablePointerValue
 from .variable_assignment import VariableAssignment
 
 
 class VariablesState:
-    _batch_observing_variable_changes: bool = False
-    _changed_variables_for_batch_ops: set[str] = set()
+    def __init__(self, call_stack: CallStack, list_definitions=None):
+        self._batch_observing_variable_changes = False
+        self._call_stack = call_stack
+        self._changed_variables_for_batch_obs: set[str] = set()
 
-    default_global_variables: dict[str, InkObject] = {}
-    variable_changed_event_callbacks: list[t.Callable] = []
+        self._default_global_variables: dict[str, InkObject] = {}
+        self._global_variables: dict[str, InkObject] = {}
 
-    def __init__(
-        self, call_stack: CallStack, list_definitions: t.Optional[ListDefinition] = None
-    ):
-        self.call_stack = call_stack
-        self.global_variables: dict[str, InkObject] = {}
-        self.list_definitions = list_definitions
+    def __getitem__(self, name: str) -> t.Any:
+        value = self._global_variables.get(name)
 
-    def assign(self, assignment: VariableAssignment, value: InkObject):
-        name = assignment.variable_name
+        if value is None:
+            value = self._default_global_variables.get(name)
+
+        return value and value.value or None
+
+    def __setitem__(self, name: str, value: t.Any):
+        if name not in self._default_global_variables:
+            raise StoryException(
+                f"Cannot assign to a variable ('{name}') that hasn't been declared in "
+                "the story"
+            )
+
+        value_obj = Value.create(value)
+        if value_obj is None:
+            if value_obj is None:
+                raise RuntimeError("Cannot pass None to VariableState")
+            else:
+                raise RuntimeError(f"Invalid value passed to VariableState: {value!r}")
+
+        self.set_global(name, value_obj)
+
+    def assign(self, assign: VariableAssignment, value: InkObject):
+        name = assign.variable_name
         index = -1
 
-        if assignment.is_new_declaration:
-            set_global = assignment.is_global
+        if assign.is_new_decl:
+            set_global = True
         else:
             set_global = self.global_variable_exists_with_name(name)
 
-        if assignment.is_new_declaration:
+        if assign.is_new_decl:
             if isinstance(value, VariablePointerValue):
                 value = self.resolve_variable_pointer(value)
         else:
             existing_pointer = True
             while existing_pointer:
                 existing_pointer = self.get_raw_variable_with_name(name, index)
-                if existing_pointer:
+                if isinstance(existing_pointer, VariablePointerValue):
                     name = existing_pointer.variable_name
                     index = existing_pointer.index
                     set_global = index == 0
+                else:
+                    break
 
         if set_global:
             self.set_global(name, value)
         else:
-            self.call_stack.set_temporary_variable(
-                name, value, assignment.is_new_declaration, index
+            self._call_stack.set_temporary_variable(
+                name, value, assign.is_new_decl, index
             )
 
     @property
@@ -59,34 +78,45 @@ class VariablesState:
     def batch_observing_variable_changes(self, value: bool):
         self._batch_observing_variable_changes = value
 
-        if value:
-            self._changed_variables_for_batch_ops = set()
-        else:
-            if self._changed_variables_for_batch_ops:
-                for name in self._changed_variables_for_batch_ops:
-                    current_value = self.global_variables.get(name)
+        if not value:
+            if self._changed_variables_for_batch_obs:
+                for name in self._changed_variables_for_batch_obs:
+                    current_value = self._global_variables[name]
                     self.variable_changed_event(name, current_value)
 
-            self._changed_variables_for_batch_ops.clear()
+        self._changed_variables_for_batch_obs.clear()
 
-    def get_raw_variable_with_name(self, name: str, index: int = -1) -> InkObject:
-        if index == 0 or index == -1:
-            value = self.global_variables.get(name, None)
+    @property
+    def call_stack(self) -> CallStack:
+        return self._call_stack
+
+    @call_stack.setter
+    def call_stack(self, value: CallStack):
+        self._call_stack = value
+
+    def get_context_index_of_variable_named(self, name: str) -> int:
+        if self.global_variable_exists_with_name(name):
+            return 0
+
+        return self._call_stack.current_element_index
+
+    def get_raw_variable_with_name(
+        self, name: str, index: int = -1
+    ) -> InkObject | None:
+        if index <= 0:
+            value = self._global_variables.get(name)
             if value is not None:
                 return value
 
-            value = self.default_global_variables.get(name, None)
+            value = self._default_global_variables.get(name)
             if value is not None:
                 return value
 
-            # TODO: var listItemValue = _listDefsOrigin.FindSingleItemListWithName (name);
-            #    if (listItemValue)
-            #         return listItemValue;
+            # TODO: handle list values
 
-        value = self.call_stack.get_temporary_variable_with_name(name, index)
-        return value
+        return self._call_stack.get_temporary_variable_with_name(name, index)
 
-    def get_variable_with_name(self, name: str, index: int = -1) -> InkObject:
+    def get_variable_with_name(self, name: str, index: int = -1) -> InkObject | None:
         value = self.get_raw_variable_with_name(name, index)
 
         if isinstance(value, VariablePointerValue):
@@ -95,25 +125,45 @@ class VariablesState:
         return value
 
     def global_variable_exists_with_name(self, name: str) -> bool:
-        return name in self.global_variables or name in self.default_global_variables
+        return name in self._global_variables or name in self._default_global_variables
 
-    def observe_variable_change(self, callback: t.Callable):
-        self.variable_changed_event_callbacks.append(callback)
+    def resolve_variable_pointer(
+        self, value: VariablePointerValue
+    ) -> VariablePointerValue:
+        index = value.index
+
+        if index == -1:
+            index = self.get_content_index_of_variable_named(value.variable_name)
+
+        value_of_variable_pointed_to = self.get_raw_variable_with_name(
+            value.variable_name, index
+        )
+
+        # extra layer of indirection
+        if isinstance(value_of_variable_pointed_to, VariablePointerValue):
+            return value_of_variable_pointed_to
+        else:
+            return VariablePointerValue(value.variable_name, index)
 
     def set_global(self, name: str, value: InkObject):
-        old_value = self.global_variables.get(name, None)
+        old_value = self._global_variables.get(name)
 
-        ListValue.retain_list_origins_for_assignment(old_value, value)
+        self._global_variables[name] = value
 
-        self.global_variables[name] = value
-        if self.batch_observing_variable_changes:
-            self._changed_variables_for_batch_ops.add(name)
+        if self.variable_changed_event is not None and value != old_value:
+            if self.batch_observing_variable_changes:
+                self._changed_variables_for_batch_obs.add(name)
         else:
             self.variable_changed_event(name, value)
 
-    def snapshot_default_variables(self):
-        self.default_global_variables = self.global_variables.copy()
+    def snapshot_default_globals(self):
+        self._default_global_variables = self._global_variables.copy()
 
-    def variable_changed_event(self, name: str, value: InkObject):
-        for callback in self.variable_changed_event_callbacks:
-            callback(name, value)
+    def try_get_default_variable_value(self, name: str) -> InkObject | None:
+        return self._default_global_variables.get(name)
+
+    def value_at_variable_pointer(self, value: VariablePointerValue) -> InkObject:
+        return self.get_variable_with_name(value.variable_name, value.index)
+
+    def variable_changed_event(self, name: str, value: t.Any):
+        return

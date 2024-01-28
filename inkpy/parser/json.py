@@ -1,10 +1,6 @@
-import logging
 import json
-
 import typing as t
 import warnings
-
-import json_stream
 
 from ..runtime.choice_point import ChoicePoint
 from ..runtime.container import Container
@@ -15,6 +11,7 @@ from ..runtime.ink_list import InkList, InkListItem
 from ..runtime.native_function_call import NativeFunctionCall
 from ..runtime.path import Path
 from ..runtime.push_pop import PushPopType
+from ..runtime.tag import Tag
 from ..runtime.value import (
     DivertTargetValue,
     ListValue,
@@ -27,10 +24,7 @@ from ..runtime.variable_reference import VariableReference
 from ..runtime.void import Void
 
 
-logger = logging.getLogger(__name__)
-
-
-class JsonParser:
+class JSONParser:
     """Parser for the "compiled" runtime-optimised JSON format.
 
     ----------------------
@@ -124,15 +118,13 @@ class JsonParser:
         if not root:
             raise ValueError("Root node for ink not found")
 
-        return self._parse_token_to_object(root), data.get("listDefs", [])
+        return self._parse_token_to_object(root), data.get("listDefs", {})
 
-    def _parse_list_to_container(self, list):
-        logger.debug("Parsing container: %s", str(list)[:50])
-
+    def _parse_array_to_container(self, array):
         container = Container()
-        container.content = self._parse_list_to_obj_list(list, True)
+        container.content = self._parse_array_to_objects(array, skip_last=True)
 
-        if terminator := list[-1]:
+        if terminator := array[-1]:
             named_only_content = {}
 
             for key, value in terminator.items():
@@ -141,203 +133,181 @@ class JsonParser:
                 elif key == "#n":
                     container.name = str(value)
                 else:
-                    named_content_item = self._parse_token_to_object(value)
-                    if isinstance(named_content_item, Container):
-                        named_content_item.name = key
-                    named_only_content[key] = named_content_item
+                    item = self._parse_token_to_object(value)
+                    if isinstance(item, Container):
+                        item.name = key
+                    named_only_content[key] = item
 
             container.named_only_content = named_only_content
 
         return container
 
-    def _parse_list_to_obj_list(self, list, skip_last: bool = False):
-        logger.debug("Parsing object list: %s", str(list)[:50])
-
-        obj_list = []
-
+    def _parse_array_to_objects(self, array, skip_last=False):
         if skip_last:
-            list = list[:-1]
+            array = array[:-1]
 
-        for token in list:
+        objects = []
+
+        for token in array:
             obj = self._parse_token_to_object(token)
-            obj_list.append(obj)
 
-        return obj_list
+            objects.append(obj)
 
-    def _parse_obj_to_choice(self, obj):
-        logger.debug("Parsing choice: %s", str(obj)[:50])
-
-        choice = Choice()
-        choice.text = str(obj.get("text"))
-        choice.index = int(obj.get("index"))
-        choice.source_path = str(obj.get("original_choice_path"))
-        choice.original_thread_index = int(obj.get("originalThreadIndex"))
-        choice.path_string_on_choice = str(obj.get("targetPath"))
-        if obj.get("tags"):
-            choice.tags = obj.get("tags")
-        return choice
+        return objects
 
     def _parse_token_to_object(self, token):
-        logger.debug("Parsing token: %s", str(token)[:50])
-
-        if isinstance(token, (int, float, bool)):
+        if isinstance(token, (int, bool, float)):
             return Value.create(token)
 
-        if isinstance(token, str):
-            first_char = token[0]
-            if first_char == "^":
+        elif isinstance(token, str):
+            # string value
+            if token[0] == "^":
                 return StringValue(token[1:])
-            elif first_char == "\n" and len(token) == 1:
-                return StringValue("\n")
+            elif token == "\n":
+                return StringValue(token)
 
-            # Glue
+            # glue
             if token == "<>":
                 return Glue()
 
-            # Older Glue Encoding
-            # if token in ("G<", "G>"):
-            #     return Glue()
+            # glue (older syntax)
+            if token in ("G<", "G>"):
+                return Glue()
 
-            # Control commands (Implemented hash set as per comments in ink / inkjs)
-            command_type = ControlCommand.CommandType._value2member_map_.get(token)
-            if command_type:
-                return ControlCommand(command_type)
+            # control commands
+            if ControlCommand.exists_with_name(token):
+                return ControlCommand(token)
 
-            # Native Functions
+            # rename intersect native function to avoid conflict with string
             if token == "L^":
                 token = "^"
+
+            # native functions
             if NativeFunctionCall.call_exists_with_name(token):
                 return NativeFunctionCall.call_with_name(token)
 
-            # Pop
+            # pop functions
             if token == "->->":
                 return ControlCommand.PopTunnel()
             if token == "~ret":
                 return ControlCommand.PopFunction()
 
+            # void
             if token == "void":
                 return Void()
-        elif isinstance(token, dict):
-            obj = t.cast(dict, token)
 
-            # DivertTargetValue
-            if value := obj.get("^->"):
+        elif isinstance(token, dict):
+            # divert value
+            if value := token.get("^->"):
                 return DivertTargetValue(Path(str(value)))
 
-            # VariablePointerValue
-            if value := obj.get("^var"):
-                pointer = VariablePointerValue(str(value))
-                if "ci" in obj:
-                    value = obj.get("ci")
+            # variable pointer value
+            if value := token.get("^var"):
+                pointer = VariablePointerValue(value)
+                if value := token.get("ci"):
                     pointer.index = int(value)
                 return pointer
 
-            # Divert
+            # divert
             is_divert = False
             pushes_to_stack = False
             div_push_type = PushPopType.Function
             external = False
 
-            if value := obj.get("->"):
+            if value := token.get("->"):
                 is_divert = True
-            elif value := obj.get("f()"):
+            elif value := token.get("f()"):
                 is_divert = True
                 pushes_to_stack = True
                 div_push_type = PushPopType.Function
-            elif value := obj.get("->t->"):
+            elif value := token.get("->t->"):
                 is_divert = True
                 pushes_to_stack = True
                 div_push_type = PushPopType.Tunnel
-            elif value := obj.get("x()"):
+            elif value := token.get("x()"):
                 is_divert = True
                 external = True
                 pushes_to_stack = False
                 div_push_type = PushPopType.Function
 
             if is_divert:
-                divert = Divert(div_push_type)
+                divert = Divert()
                 divert.pushes_to_stack = pushes_to_stack
+                divert.stack_push_type = div_push_type
                 divert.is_external = external
 
                 target = str(value)
 
-                if value := obj.get("var"):
+                if value := token.get("var"):
                     divert.variable_divert_name = target
                 else:
                     divert.target_path_string = target
 
-                divert.is_conditional = bool(obj.get("c"))
+                divert.is_conditional = bool(token.get("c", False))
 
                 if external:
-                    if value := obj.get("exArgs"):
+                    if value := token.get("exargs"):
                         divert.external_args = int(value)
 
                 return divert
 
-            # Choice
-            if value := obj.get("*"):
+            # choice
+            if value := token.get("*"):
                 choice = ChoicePoint()
                 choice.path_string_on_choice = str(value)
 
-                if value := obj.get("flg"):
-                    choice.flags = int(value)
+                if value := token.get("flg"):
+                    choice.flags = value
 
                 return choice
 
-            # Variable reference
-            if value := obj.get("VAR?"):
+            # variable reference
+            if value := token.get("VAR?"):
                 return VariableReference(str(value))
-            elif value := obj.get("CNT?"):
-                read_count_variable_reference = VariableReference()
-                read_count_variable_reference.path_string_for_count = str(value)
-                return read_count_variable_reference
+            elif value := token.get("CNT?"):
+                read_count_var_ref = VariableReference()
+                read_count_var_ref.path_string_for_count = str(value)
+                return read_count_var_ref
 
-            # Variable assignment
-            is_variable_assignment = False
+            # variable assignment
+            is_variable_assign = False
             is_global_variable = False
 
-            if value := obj.get("VAR="):
-                is_variable_assignment = True
+            if value := token.get("VAR="):
+                is_variable_assign = True
                 is_global_variable = True
-            elif value := obj.get("temp="):
-                is_variable_assignment = True
+            elif value := token.get("temp="):
+                is_variable_assign = True
                 is_global_variable = False
 
-            if is_variable_assignment:
-                name = str(value)
-                is_new_decl = not obj.get("re")
-                assignment = VariableAssignment(name, is_new_decl)
-                assignment.is_global = is_global_variable
-                return assignment
+            if is_variable_assign:
+                variable_name = str(value)
+                is_new_decl = not token.get("re", False)
+                variable_assign = VariableAssignment(variable_name, is_new_decl)
+                variable_assign.is_global = is_global_variable
+                return variable_assign
 
-            # Tag
-            if value := obj.get("#"):
+            # legacy tag with text
+            if value := token.get("#"):
                 return Tag(str(value))
 
-            # List value
-            if "list" in obj:
-                value = obj.get("list")
-                raw = InkList()
-
-                for key, val in obj["list"].items():
+            # list value
+            if "list" in token:  # to handle empty lists
+                list_content = token["list"]
+                raw_list = InkList()
+                if value := token.get("origins"):
+                    raw_list.set_initial_origin_names(value)
+                for key, val in list_content.items():
                     item = InkListItem(key)
-                    val = int(val)
-                    raw[item] = val
+                    raw_list[item] = val
+                return ListValue(raw_list)
 
-                if value := obj.get("origins"):
-                    raw.set_initial_origin_names(value)
-
-                return ListValue(raw)
-
-            # Choice
-            if obj.get("originalChoicePath"):
-                return self._parse_obj_to_choice(obj)
+            # TODO: choice for serliazed save
 
         elif isinstance(token, list):
-            # array is always a container
-            return self._parse_list_to_container(token)
+            return self._parse_array_to_container(token)
 
-        if token is None:
-            return
+        elif token is None:
+            return None
 
-        raise RuntimeError(f"Failed to convert token to runtime object: {token}")
+        raise RuntimeError(f"Failed to convert token to runtime object: '{token}'")

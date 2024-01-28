@@ -29,6 +29,9 @@ class Value(InkObject, metaclass=ABCMeta):
     def __bool__(self):
         return bool(self.value)
 
+    def __repr__(self):
+        return repr(self.value)
+
     @abstractmethod
     def cast(self, type: "ValueType") -> "Value":
         ...
@@ -38,22 +41,18 @@ class Value(InkObject, metaclass=ABCMeta):
         ...
 
     def copy(self) -> "Value":
-        return self.create(self.value)
+        return self.create(self.value, self.type)
 
     @staticmethod
-    def create(value: t.Any) -> "Value":
-        if isinstance(value, bool):
+    def create(value: t.Any, type: t.Optional[ValueType] = None) -> "Value":
+        if isinstance(value, bool) or type == ValueType.Bool:
             return BoolValue(value)
-        elif isinstance(value, int):
+        elif isinstance(value, int) or type == ValueType.Int:
             return IntValue(value)
-        elif isinstance(value, float):
+        elif isinstance(value, float) or type == ValueType.Float:
             return FloatValue(value)
-        elif isinstance(value, str):
+        elif isinstance(value, str) or type == ValueType.String:
             return StringValue(value)
-        elif isinstance(value, Path):
-            return DivertTargetValue(value)
-        elif isinstance(value, InkList):
-            return ListValue(value)
 
         return
 
@@ -72,7 +71,7 @@ class BoolValue(Value):
     def __bool__(self) -> bool:
         return self.value
 
-    def __str__(self):
+    def __repr__(self):
         return self.value and "true" or "false"
 
     def cast(self, type: "ValueType") -> "Value":
@@ -164,9 +163,6 @@ class StringValue(Value):
     def __bool__(self) -> bool:
         return len(self.value) > 0
 
-    def __str__(self):
-        return self.value
-
     def cast(self, type: "ValueType") -> "Value":
         if type == self.type:
             return self
@@ -196,7 +192,7 @@ class DivertTargetValue(Value):
     def __bool__(self):
         raise RuntimeError("Shouldn't be checking the truthiness of a divert target")
 
-    def __str__(self):
+    def __repr__(self):
         return f"DivertTargetValue({self.target_path})"
 
     def cast(self, type: "ValueType") -> "Value":
@@ -225,7 +221,7 @@ class VariablePointerValue(Value):
     def __bool__(self):
         raise RuntimeError("Shouldn't be checking the truthiness of a variable pointer")
 
-    def __str__(self):
+    def __repr__(self):
         return f"VariablePointerValue({self.variable_name})"
 
     def cast(self, type: "ValueType") -> "Value":

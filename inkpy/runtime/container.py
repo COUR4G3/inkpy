@@ -2,97 +2,158 @@ import typing as t
 
 from enum import IntEnum
 
+from .named_content import NamedContent
 from .object import InkObject
 from .path import Path
-from .search_result import SearchResult
+from .value import StringValue
+
+if t.TYPE_CHECKING:
+    from .search_result import SearchResult
 
 
-class Container(InkObject):
+class Container(NamedContent):
     class CountFlags(IntEnum):
         Visits = 1
         Turns = 2
         CountStartOnly = 4
 
-    def __init__(self, name: t.Optional[str] = None):
+    def __init__(self, name: t.Optional[str] = None, **kwargs):
         self.name = name
 
         self._content: list[InkObject] = []
-        self.named_content: dict[str, InkObject] = {}
+        self.named_content: dict[str, NamedContent] = {}
 
         self.visits_should_be_counted: bool = False
         self.turn_index_should_be_counted: bool = False
         self.count_at_start_only: bool = False
 
-        super().__init__()
+        self._path_to_first_leaf_content: t.Optional[Path] = None
 
-    def __str__(self):
-        return f"[name={self.name}, [...], {{...}}]"
+        super().__init__(**kwargs)
 
-    def add_content(self, value: list[InkObject] | InkObject):
-        if isinstance(value, list):
-            for content in value:
-                self.add_content(content)
+    def __repr__(self):
+        return self.build_string_of_heirachy()
+
+    def add_content(self, content: t.Union["InkObject", list["InkObject"]]):
+        if isinstance(content, list):
+            for item in content:
+                self.add_content(item)
         else:
-            self._content.append(value)
+            self.content.append(content)
 
-            if value.parent:
-                raise RuntimeError(f"Content is already in {value.parent}")
+            # TODO: remove this when done testing
+            if content is None:
+                return
 
-            value.parent = self
+            if content.parent:
+                raise RuntimeError(
+                    f"Content '{content}' is already in '{content.parent}'"
+                )
 
-            self.try_add_named_content(value)
+            content.parent = self
 
-    def add_to_named_content_only(self, content: InkObject):
+            self.try_add_named_content(content)
+
+    def add_to_named_content_only(self, content: NamedContent):
+        content.parent = self
+
         self.named_content[content.name] = content
+
+    def build_string_of_heirachy(
+        self, current_object: InkObject | None = None, indent: int = 0
+    ) -> str:
+        text = f"{indent*' '}["
+
+        if self.has_valid_name:
+            text += f" ({self.name})"
+
+        if self is current_object:
+            text += " <---"
+
+        text += "\n"
+
+        indent += 2
+
+        text += f"{indent*' '}[\n"
+
+        indent += 2
+
+        for content in self.content:
+            if isinstance(content, Container):
+                text += content.build_string_of_heirachy(current_object, indent) + "\n"
+            elif isinstance(content, StringValue):
+                text += f'{indent*" "}"' + content.value.replace("\n", "\\n") + '",\n'
+            else:
+                text += f"{indent*' '}{content!r},\n"
+
+        indent -= 2
+
+        text += f"{indent*' '}],\n"
+
+        named_only_content = self.named_only_content
+        if named_only_content:
+            text += f"{indent*' '}-- named: --\n"
+
+            for content in named_only_content.values():
+                text += content.build_string_of_heirachy(current_object, indent) + "\n"
+
+        indent -= 2
+
+        text += f"{indent*' '}]{indent and ',' or ''}"
+
+        return text
 
     @property
     def content(self) -> list[InkObject]:
         return self._content
 
     @content.setter
-    def content(self, value: list[InkObject]):
-        self.add_content(value)
+    def content(self, content: t.Union["InkObject", list["InkObject"]]):
+        self.add_content(content)
 
     def content_at_path(
         self, path: Path, start: int = 0, length: int = -1
-    ) -> SearchResult:
+    ) -> "SearchResult":
         if length == -1:
             length = len(path)
 
+        from .search_result import SearchResult
+
         result = SearchResult(approximate=False)
 
-        current_container = current_object = self
-        for component in path.components[start:length]:
-            if not current_container:
+        container = self
+        current_object = self
+
+        for component in path.components[start - 1 : length]:
+            if not isinstance(container, Container):
                 result.approximate = True
                 break
 
-            object = current_container.content_with_path_component(component)
-            if not object:
+            object = container.content_with_path_component(component)
+
+            if object is None:
                 result.approximate = True
                 break
 
             current_object = object
-            current_container = isinstance(object, Container) and object or None
+            container = object
 
         result.obj = current_object
+
         return result
 
-    def content_with_path_component(
-        self, component: Path.Component
-    ) -> t.Optional[InkObject]:
+    def content_with_path_component(self, component: Path.Component) -> InkObject:
         if component.is_index:
             if component.index >= 0 and component.index < len(self.content):
                 return self.content[component.index]
-            else:
-                return
         elif component.is_parent:
             return self.parent
         else:
-            return self.named_content.get(component.name)
+            content = self.named_content.get(component.name)
+            return content
 
     @property
-    def count_flags(self) -> CountFlags:
+    def count_flags(self) -> "Container.CountFlags":
         flags = 0
 
         if self.visits_should_be_counted:
@@ -108,31 +169,48 @@ class Container(InkObject):
         return flags
 
     @count_flags.setter
-    def count_flags(self, value: int):
-        if value & Container.CountFlags.Visits:
+    def count_flags(self, value: "Container.CountFlags"):
+        if value & Container.CountFlags.Visits > 0:
             self.visits_should_be_counted = True
-        if value & Container.CountFlags.Turns:
-            self.turn_index_should_be_counted = True
-        if value & Container.CountFlags.CountStartOnly:
+        if value & Container.CountFlags.Turns > 0:
+            self.visits_should_be_counted = True
+        if value & Container.CountFlags.CountStartOnly > 0:
             self.count_at_start_only = True
 
     @property
-    def named_only_content(self) -> dict[str, InkObject]:
-        return {
-            k: v for k, v in self.named_content.items() if getattr(v, "name", False)
-        }
+    def named_only_content(self) -> dict[str, NamedContent]:
+        named_only_content = self.named_content.copy()
+
+        for c in self.content:
+            if isinstance(c, NamedContent) and c.has_valid_name:
+                named_only_content.pop(c.name, None)
+
+        return named_only_content
 
     @named_only_content.setter
-    def named_only_content(self, value: t.Optional[dict[str, InkObject]]):
-        for key in self.named_only_content.keys():
-            del self.named_content[key]
+    def named_only_content(self, value: t.Optional[dict[str, NamedContent]] = None):
+        for key in self.named_only_content:
+            self.named_content.pop(key)
 
-        if not value:
+        if value is None:
             return
 
-        for val in value.values():
-            self.add_to_named_content_only(val)
+        for value in value.values():
+            if isinstance(value, NamedContent):
+                self.add_to_named_content_only(value)
+
+    @property
+    def path_to_first_leaf_content(self) -> Path:
+        components = []
+        container = self
+
+        while isinstance(container, Container):
+            if len(container.content) > 0:
+                components.append(Path.Component(0))
+                container = container.content[0]
+
+        return Path(components)
 
     def try_add_named_content(self, content: InkObject):
-        if hasattr(content, "name"):
+        if isinstance(content, NamedContent) and content.has_valid_name:
             self.add_to_named_content_only(content)

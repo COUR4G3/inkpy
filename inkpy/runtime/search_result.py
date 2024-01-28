@@ -1,23 +1,25 @@
 import typing as t
 
-from dataclasses import dataclass
-
-from .object import InkObject
-
 
 if t.TYPE_CHECKING:
     from .container import Container
+    from .object import InkObject
 
 
-@dataclass
 class SearchResult:
-    obj: t.Optional[InkObject] = None
-    approximate: t.Optional[bool] = False
+    def __init__(self, obj: t.Optional["InkObject"] = None, approximate: bool = False):
+        self.obj = obj
+        self.approximate = approximate
 
     @property
     def container(self) -> t.Optional["Container"]:
-        return type(self.obj).__name__ == "Container" and self.obj or None
+        from .container import Container
+
+        return isinstance(self.obj, Container) and self.obj or None
+
+    def copy(self) -> "SearchResult":
+        return SearchResult(obj=self.obj, approximate=self.approximate)
 
     @property
-    def correct_obj(self) -> t.Optional[InkObject]:
-        return not self.approximate and self.obj or None
+    def correct_obj(self) -> t.Optional["InkObject"]:
+        return self.approximate and None or self.obj

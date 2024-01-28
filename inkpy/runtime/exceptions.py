@@ -1,2 +1,2 @@
-class StoryException(Exception):
+class StoryException(RuntimeError):
     pass

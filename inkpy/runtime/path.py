@@ -2,31 +2,32 @@ import typing as t
 
 
 class Path:
-    PARENT_ID: str = "^"
+    PARENT_ID = "^"
 
     class Component:
         def __init__(self, index_or_name: int | str):
-            if isinstance(index_or_name, int):
-                self.index = index_or_name
-                self.name = None
-            else:
-                self.index = -1
+            self.index = -1
+            self.name = None
+
+            if isinstance(index_or_name, str):
                 self.name = index_or_name
+            else:
+                self.index = index_or_name
 
-        def __eq__(self, other: "Path.Component"):
-            if isinstance(other, Path.Component) and other.is_index == self.is_index:
-                if self.is_index:
-                    return self.is_index == other.is_index
-                else:
-                    return self.name == other.name
-
+        def __eq__(self, other):
+            if isinstance(other, Path.Component):
+                if self.is_index == other.is_index:
+                    if self.is_index:
+                        return self.index == other.index
+                    else:
+                        return self.name == other.name
             return False
 
+        def __repr__(self):
+            return self.is_index and str(self.index) or self.name
+
         def __str__(self):
-            if self.is_index:
-                return str(self.index)
-            else:
-                return self.name
+            return self.is_index and str(self.index) or self.name
 
         @property
         def is_index(self) -> bool:
@@ -37,80 +38,75 @@ class Path:
             return self.name == Path.PARENT_ID
 
         @staticmethod
-        def to_parent():
+        def to_parent() -> "Path.Component":
             return Path.Component(Path.PARENT_ID)
 
     def __init__(
         self,
-        components: t.Optional[
-            t.Union[list["Path.Component"], "Path.Component", str]
-        ] = None,
+        components: t.Optional[Component | str | list[Component]] = None,
         tail: t.Optional["Path"] = None,
         is_relative: bool = False,
     ):
-        self.components: list[Path.Component] = []
-
-        if isinstance(components, list):
-            self.components.extend(components)
-        elif isinstance(components, str):
-            if components.startswith("."):
-                is_relative = True
-                components = components[1:]
-
-            components = components.split(".")
-            for component in components:
-                try:
-                    index = int(component)
-                except ValueError:
-                    self.components.append(Path.Component(component))
-                else:
-                    self.components.append(Path.Component(index))
-        elif components:
-            self.components.append(components)
-
-        if tail:
-            self.components = self.components.extend(tail.components)
-
+        self._components = []
         self.is_relative = is_relative
+        self.components = components
+        if tail:
+            self.components.append(tail)
 
-    def __add__(self, other: t.Union["Path", "Path.Component"]) -> "Path":
-        if isinstance(other, Path):
-            return self.path_by_appending_path(other)
-        elif isinstance(other, Path.Component):
-            return self.path_by_appending_component(other)
-        else:
-            raise TypeError(f"Cannot append '{type(other)}' to path")
+    def __eq__(self, other):
+        if not isinstance(other, Path):
+            return False
+        elif len(self) != len(other):
+            return False
+        elif self.is_relative != other.is_relative:
+            return False
+
+        for self_component, other_component in zip(self, other):
+            if self_component != other_component:
+                return False
+        return True
 
     def __iter__(self):
-        return iter(self.components)
+        return iter(self._components)
 
-    def __len__(self) -> int:
-        return len(self.components)
+    def __len__(self):
+        return len(self._components)
+
+    def __repr__(self):
+        return f"{self.is_relative and '.' or ''}{'.'.join(map(repr, self.components))}"
 
     def __str__(self):
-        path_string = ".".join(str(c) for c in self.components)
-        if self.is_relative:
-            path_string = f".{path_string}"
-        return path_string
+        return f"{self.is_relative and '.' or ''}{'.'.join(map(str, self.components))}"
 
-    def __truediv__(self, other: t.Union["Path", "Path.Component"]) -> "Path":
-        if isinstance(other, Path):
-            return self.path_by_appending_path(other)
-        elif isinstance(other, Path.Component):
-            return self.path_by_appending_component(other)
+    @property
+    def components(self) -> list[Component]:
+        return self._components
+
+    @components.setter
+    def components(self, value: Component | str | list[Component]):
+        if value is None:
+            self._components.clear()
+        elif isinstance(value, Path.Component):
+            self._components.clear()
+            self._components = [Path.Component]
+        elif isinstance(value, list):
+            self._components = value
         else:
-            raise TypeError(f"Cannot append '{type(other)}' to path")
+            if value.startswith("."):
+                self.is_relative = True
+                value = value[1:]
+            else:
+                self.is_relative = False
+            for component in value.split("."):
+                try:
+                    self._components.append(Path.Component(int(component)))
+                except ValueError:
+                    self._components.append(Path.Component(component))
 
     @property
     def last_component(self) -> t.Optional["Path.Component"]:
-        if self.components:
-            return self.components[-1]
-
-    def path_by_appending_component(self, component: "Path.Component") -> "Path":
-        path = Path()
-        path.components.extend(self.components)
-        path.components.append(component)
-        return path
+        if self._components:
+            return self._components[-1]
 
     def path_by_appending_path(self, path: "Path") -> "Path":
         p = Path()
@@ -132,9 +128,5 @@ class Path:
 
     @property
     def tail(self) -> "Path":
-        if len(self.components) >= 2:
-            return Path(self.components[1:])
-        else:
-            path = Path()
-            path.is_relative = True
-            return path
+        if len(self._components) >= 2:
+            return Path(self._components[1:])

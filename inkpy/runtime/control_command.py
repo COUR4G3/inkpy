@@ -5,6 +5,7 @@ from .object import InkObject
 
 class ControlCommand(InkObject):
     class CommandType(Enum):
+        NotSet = -1
         EvalStart = "ev"
         EvalOutput = "out"
         EvalEnd = "/ev"
@@ -32,18 +33,27 @@ class ControlCommand(InkObject):
         BeginTag = "#"
         EndTag = "/#"
 
-    def __init__(self, type: CommandType):
-        super().__init__()
+    COMMAND_TYPE_TO_STRING = {t: t.value for t in CommandType}
+    STRING_TO_COMMAND_TYPE = {t.value: t for t in CommandType}
 
+    def __init__(self, type: CommandType | str = CommandType.NotSet):
+        if isinstance(type, str):
+            type = self.STRING_TO_COMMAND_TYPE[type]
         self.type = type
 
-    def __str__(self):
-        return f"ControlCommand {self.type}"
+        super().__init__()
 
-    @staticmethod
-    def PopFunction() -> "ControlCommand":
-        return ControlCommand(ControlCommand.CommandType.PopFunction)
+    def __repr__(self):
+        return f"{self.type.name} '{self.type.value}'"
 
-    @staticmethod
-    def PopTunnel() -> "ControlCommand":
-        return ControlCommand(ControlCommand.CommandType.PopTunnel)
+    @classmethod
+    def exists_with_name(cls, type: str):
+        return type in cls.STRING_TO_COMMAND_TYPE
+
+    @classmethod
+    def PopFunction(cls):
+        return cls(ControlCommand.CommandType.PopFunction)
+
+    @classmethod
+    def PopTunnel(cls):
+        return cls(ControlCommand.CommandType.PopTunnel)

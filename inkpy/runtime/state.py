@@ -1,58 +1,73 @@
+import json
+import random
+import time
 import typing as t
+import warnings
 
 from .call_stack import CallStack
 from .choice import Choice
+from .container import Container
 from .control_command import ControlCommand
-from .flow import Flow
 from .glue import Glue
+from .flow import Flow
+from .path import Path
 from .pointer import Pointer
 from .push_pop import PushPopType
-from .variables_state import VariablesState
 from .value import ListValue, StringValue
+from .variables_state import VariablesState
 
 
 if t.TYPE_CHECKING:
-    from .container import Container
     from .object import InkObject
-    from .path import Path
     from .story import Story
 
 
 class State:
-    DEFAULT_FLOW_NAME: str = "DEFAULT_FLOW"
+    DEFAULT_FLOW_NAME = "DEFAULT_FLOW"
+
+    INK_SAVE_STATE_VERSION = 10
+    MIN_COMPATIBLE_LOAD_VERSION = 8
+
+    OnDidLoadState = t.Callable[[], None]
 
     def __init__(self, story: "Story"):
         self.story = story
 
-        self.current_flow = Flow(self.DEFAULT_FLOW_NAME, story)
-        self.current_turn_index: int = -1
+        self.current_errors: list[str] = []
+        self.current_warnings: list[str] = []
+        self.did_safe_exit = False
         self.diverted_pointer: t.Optional[Pointer] = None
-        self.errors: list[str] = []
-        self.eval_stack: list = []
-        self.named_flows: dict[str, Flow] = {}
-        self.output_stream: list = []
-        self.seed: int = 42
-        self.turn_indices: dict[str, int] = {}
-        self.variables_state = VariablesState(self.call_stack, story.list_definitions)
-        self.visit_counts: dict[str, int] = {}
-        self.warnings: list[str] = []
+        self.evaluation_stack: list[InkObject] = []
+        self.output_stream: list["InkObject"] = []
 
-        self._output_stream_tags_dirty = True
-        self._output_stream_text_dirty = True
+        self._current_flow = Flow(self.DEFAULT_FLOW_NAME, story)
+        self._named_flows: dict[str, Flow] = {}
+
+        self._on_did_load_state: t.Optional[self.OnDidLoadState] = None
+
+        self._turn_indices: dict[str, int] = {}
+        self._visit_counts: dict[str, int] = {}
+
+        # seed the random number generator
+        time_seed = time.time_ns() // 1_000_000
+        self.story_seed = random.Random(time_seed).randint(0, 2**31 - 1) % 100
+        self.previous_random = 0
+
+        self.variables_state = VariablesState(self.call_stack, story.list_definitions)
 
         self.goto_start()
 
     @property
     def alive_flow_names(self) -> list[str]:
-        return [f for f in self.named_flows if f != self.DEFAULT_FLOW_NAME]
+        return [name for name in self._named_flows if name != self.DEFAULT_FLOW_NAME]
 
     @property
     def call_stack(self) -> CallStack:
-        return self.current_flow.call_stack
+        return self._current_flow.call_stack
 
     @property
     def can_continue(self) -> bool:
-        return self.current_pointer and not self.has_error
+        return bool(self.current_pointer and not self.has_error)
 
     def clean_output_whitespace(self, text: str) -> str:
         output = ""
@@ -87,22 +102,24 @@ class State:
     def current_choices(self) -> list[Choice]:
         if self.can_continue:
             return []
-        return self.current_flow.current_choices
-
-    @property
-    def current_flow_name(self) -> str:
-        return self.current_flow.name
+        return self._current_flow.current_choices
 
     @property
     def current_flow_is_default_flow(self) -> bool:
-        return self.current_flow.name == self.DEFAULT_FLOW_NAME
+        return self._current_flow.name == self.DEFAULT_FLOW_NAME
+
+    current_flow_is_default = current_flow_is_default_flow
+
+    @property
+    def current_flow_name(self) -> str:
+        return self._current_flow.name
 
     @property
     def current_pointer(self) -> Pointer:
         return self.call_stack.current_element.current_pointer
 
     @current_pointer.setter
-    def current_pointer(self, value: Pointer):
+    def current_pointer(self, value: Pointer | None):
         self.call_stack.current_element.current_pointer = value
 
     @property
@@ -127,14 +144,17 @@ class State:
 
     def force_end(self):
         self.call_stack.reset()
-        self.current_flow.current_choices.clear()
+
+        self._current_flow.current_choices.clear()
+
         self.current_pointer = None
         self.previous_pointer = None
+
         self.did_safe_exit = True
 
     @property
     def generated_choices(self) -> list[Choice]:
-        return self.current_flow.current_choices
+        return self._current_flow.current_choices
 
     def goto_start(self):
         self.call_stack.current_element.current_pointer = Pointer.start_of(
@@ -143,22 +163,26 @@ class State:
 
     @property
     def has_error(self) -> bool:
-        return len(self.errors) > 0
+        return len(self.current_errors) > 0
+
+    has_errors = has_error
 
     @property
     def has_warning(self) -> bool:
-        return len(self.warnings) > 0
+        return len(self.current_warnings) > 0
+
+    has_warnings = has_warning
 
     @property
-    def in_expression_eval(self) -> bool:
+    def in_expression_evaluation(self) -> bool:
         return self.call_stack.current_element.in_expression_eval
 
-    @in_expression_eval.setter
-    def in_expression_eval(self, value: bool):
+    @in_expression_evaluation.setter
+    def in_expression_evaluation(self, value: bool):
         self.call_stack.current_element.in_expression_eval = value
 
     @property
-    def in_string_eval(self) -> bool:
+    def in_string_evaluation(self) -> bool:
         for output in self.output_stream:
             if (
                 isinstance(output, ControlCommand)
@@ -170,10 +194,107 @@ class State:
 
     def increment_visit_count_for_container(self, container: "Container"):
         path_string = str(container.path)
-        if path_string in self.visit_counts:
-            self.visit_counts[path_string] += 1
+        if path_string in self._visit_counts:
+            self._visit_counts[path_string] += 1
         else:
-            self.visit_counts[path_string] = 0
+            self._visit_counts[path_string] = 0
+
+    def load_dict(self, data: dict[str, t.Any]):
+        # check the save state version
+        version = data.get("inkSaveVersion")
+
+        if not version:
+            raise ValueError("Version of ink save format could not be found")
+
+        try:
+            version = int(version)
+        except ValueError:
+            raise ValueError(
+                f"Version of ink save format could not be parsed: {version}"
+            )
+
+        if version < self.MIN_COMPATIBLE_LOAD_VERSION:
+            raise RuntimeError(
+                "Ink save format isn't compatible with the current version (saw "
+                f"'{version}', but minimum is '{self.MIN_COMPATIBLE_LOAD_VERSION}')"
+            )
+        elif version > self.INK_SAVE_STATE_VERSION:
+            raise RuntimeError(
+                "Ink save format is too new for the current version (saw "
+                f"'{version}', but current is '{self.INK_SAVE_STATE_VERSION}')"
+            )
+        elif version != self.INK_SAVE_STATE_VERSION:
+            warnings.warn(
+                f"Ink save format doesn't match current version (saw '{version}', but "
+                f"current is '{self.INK_SAVE_STATE_VERSION}')",
+                RuntimeWarning,
+            )
+
+        self._named_flows.clear()
+
+        # latest multi-flow format, flows always exists even if there is just a default
+        if "flows" in data:
+            flows = data["flows"]
+
+            for name, flow_data in flows.items():
+                flow = Flow(name, self, flow_data)
+
+                if len(flows) > 1:
+                    self._named_flows[name] = flow
+                else:
+                    self._current_flow = flow
+
+            if self._named_flows:
+                self._current_flow = self._named_flows["currentFlowName"]
+
+        # old format, check callstack, output stream and choices
+        else:
+            self._current_flow = Flow(self.DEFAULT_FLOW_NAME, self.story)
+            # _currentFlow.callStack.SetJsonToken ((Dictionary < string, object > )jObject ["callstackThreads"], story);
+            # _currentFlow.outputStream = Json.JArrayToRuntimeObjList ((List<object>)jObject ["outputStream"]);
+            # _currentFlow.currentChoices = Json.JArrayToRuntimeObjList<Choice>((List<object>)jObject ["currentChoices"]);
+
+            # object jChoiceThreadsObj = null;
+            # jObject.TryGetValue("choiceThreads", out jChoiceThreadsObj);
+            # _currentFlow.LoadFlowChoiceThreads((Dictionary<string, object>)jChoiceThreadsObj, story);
+
+        self.output_stream_dirty()
+
+        # variablesState.SetJsonToken((Dictionary < string, object> )jObject["variablesState"]);
+        # variablesState.callStack = _currentFlow.callStack;
+
+        # evaluationStack = Json.JArrayToRuntimeObjList ((List<object>)jObject ["evalStack"]);
+
+        if current_divert_target_path := data.get("currentDivertTarget"):
+            divert_path = Path(current_divert_target_path)
+            self.diverted_pointer = self.story.pointer_at_path(divert_path)
+
+        self._visit_counts = {k: int(v) for k, v in data["visitCounts"]}
+        self._turn_indices = {k: int(v) for k, v in data["turnIndices"]}
+
+        self.current_turn_index = int(data["turnIdx"])
+        self.story_seed = int(data["storySeed"])
+
+        # not optional, but bug in inkjs means it's actually missing in inkjs saves
+        self.previous_random = int(data.get("previousRandom", 0))
+
+        if self._on_did_load_state:
+            self._on_did_load_state()
+
+    def load_json(self, input: str | t.TextIO):
+        if isinstance(input, str):
+            data = json.loads(input)
+        else:
+            data = json.load(input)
+
+        self.load_dict(data)
+
+    def on_did_load_state(self, f: t.Optional[OnDidLoadState] = None):
+        def decorator(f):
+            self._on_did_load_state = f
+            return f
+
+        return f and decorator(f) or decorator
 
     @property
     def output_stream_contains_content(self) -> bool:
@@ -196,8 +317,8 @@ class State:
 
         return False
 
-    def peek_eval_stack(self) -> "InkObject":
-        return self.eval_stack[-1]
+    def peek_evaluation_stack(self) -> "InkObject":
+        return self.evaluation_stack[-1]
 
     def pop_callstack(self, pop_type: t.Optional[PushPopType] = None):
         if self.call_stack.current_element.type == PushPopType.Function:
@@ -205,12 +326,14 @@ class State:
 
         self.call_stack.pop(pop_type)
 
-    def pop_eval_stack(self, count: int = 1) -> t.Union["InkObject", list["InkObject"]]:
-        if count > len(self.eval_stack):
+    def pop_evaluation_stack(
+        self, count: int = 1
+    ) -> t.Union["InkObject", list["InkObject"]]:
+        if count > len(self.evaluation_stack):
             raise RuntimeError("Trying to pop too many objects from evaluation stack")
 
-        objs = self.eval_stack[-count:]
-        self.eval_stack[:] = self.eval_stack[:-count]
+        objs = self.evaluation_stack[-count:]
+        self.evaluation_stack[:] = self.evaluation_stack[:-count]
 
         if count == 1:
             return objs[0]
@@ -225,10 +348,10 @@ class State:
         return self.call_stack.current_thread.previous_pointer
 
     @previous_pointer.setter
-    def previous_pointer(self, value: Pointer):
+    def previous_pointer(self, value: Pointer | None):
         self.call_stack.current_thread.previous_pointer = value
 
-    def push_eval_stack(self, object: "InkObject"):
+    def push_evaluation_stack(self, object: "InkObject"):
         if isinstance(object, ListValue):
             raw_list = object.value
 
@@ -240,7 +363,7 @@ class State:
                 for name in raw_list.origin_names:
                     pass
 
-        self.eval_stack.append(object)
+        self.evaluation_stack.append(object)
 
     def push_to_output_stream(self, object: "InkObject"):
         if isinstance(object, StringValue):
@@ -327,26 +450,17 @@ class State:
 
         self.output_stream_dirty()
 
-    def _remove_flow(self, name: str):
-        if name == self.DEFAULT_FLOW_NAME:
-            raise Exception("Cannot destory the default flow")
-
-        if self.current_flow.name == name:
-            self._switch_to_default_flow()
-
-        del self.named_flows[name]
-
     def reset_errors(self):
-        self.errors.clear()
-        self.warnings.clear()
+        self.current_errors.clear()
+        self.current_warnings.clear()
 
-    def reset_output(self, objs: t.Optional[list] = None):
+    def reset_output(self, objs: t.Optional[list["InkObject"]] = None):
         self.output_stream.clear()
         if objs:
             self.output_stream.extend(objs)
 
     def set_chosen_path(self, path: "Path", incrementing_turn_index: bool):
-        self.current_flow.current_choices.clear()
+        self._current_flow.current_choices.clear()
 
         new_pointer = self.story.pointer_at_path(path)
         if new_pointer and new_pointer.index == -1:
@@ -357,23 +471,38 @@ class State:
         if incrementing_turn_index:
             self.current_turn_index += 1
 
-    def _switch_flow(self, name: str):
-        if not self.named_flows:
-            self.named_flows[self.DEFAULT_FLOW_NAME] = self.current_flow
+    def to_dict(self) -> dict[str, t.Any]:
+        flows = {n: f.to_dict() for n, f in self._named_flows.items()}
 
-        if name == self.current_flow.name:
-            return
+        if not flows:
+            flows = {self._current_flow.name: self._current_flow.to_dict()}
 
-        flow = self.named_flows.get(name)
-        if not flow:
-            flow = Flow(name)
-            self.named_flows[name] = flow
+        data = {
+            "currentFlowName": self._current_flow.name,
+            "flows": flows,
+            "inkFormatVersion": self.story.INK_VERSION_CURRENT,
+            "inkSaveVersion": self.INK_SAVE_STATE_VERSION,
+            "previousRandom": self.previous_random,
+            "storySeed": self.story_seed,
+            "turnIndices": self._turn_indices,
+            "visitCounts": self._visit_counts,
+        }
 
-        self.current_flow = flow
-        self.variables_state.call_stack = self.current_flow.call_stack
+        # writer.WriteProperty("variablesState", variablesState.WriteJson);
+        # writer.WriteProperty("evalStack", w => Json.WriteListRuntimeObjs(w, evaluationStack));
 
-    def _switch_to_default_flow(self):
-        self._switch_flow(self.DEFAULT_FLOW_NAME)
+        if self.diverted_pointer:
+            data["currentDivertTarget"] = str(self.diverted_pointer.path)
+
+        return data
+
+    def to_json(self, output: t.Optional[t.TextIO] = None) -> t.Optional[str]:
+        data = self.to_dict()
+
+        if output:
+            json.dump(data, output)
+        else:
+            return json.dumps(data)
 
     def trim_newlines_from_output_stream(self):
         remove_whitespace_from = -1

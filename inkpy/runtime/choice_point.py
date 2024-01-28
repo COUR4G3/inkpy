@@ -1,24 +1,30 @@
-from .container import Container
+import typing as t
+
 from .object import InkObject
 from .path import Path
+
+if t.TYPE_CHECKING:
+    from .container import Container
 
 
 class ChoicePoint(InkObject):
     def __init__(self, once_only: bool = True):
-        super().__init__()
-
         self.once_only = once_only
 
-        self.has_condition: bool
-        self.has_start_content: bool
-        self.has_choice_only_content: bool
-        self.is_invisible_default: bool
+        self.has_condition = False
+        self.has_start_content = False
+        self.has_choice_only_content = False
+        self.is_invisible_default = False
 
-    def __str__(self):
+        self._path_on_choice: t.Optional[Path] = None
+
+        super().__init__()
+
+    def __repr__(self):
         return f"Choice: -> {self.path_on_choice}"
 
     @property
-    def choice_target(self) -> Container:
+    def choice_target(self) -> t.Optional["Container"]:
         return self.resolve_path(self._path_on_choice).container
 
     @property
@@ -40,23 +46,22 @@ class ChoicePoint(InkObject):
 
     @flags.setter
     def flags(self, value: int):
-        self.has_condition = (value & 1) > 0
-        self.has_start_content = (value & 2) > 0
-        self.has_choice_only_content = (value & 4) > 0
-        self.is_invisible_default = (value & 8) > 0
-        self.once_only = (value & 16) > 0
+        self.has_condition = value & 1 > 0
+        self.has_start_content = value & 2 > 0
+        self.has_choice_only_content = value & 4 > 0
+        self.is_invisible_default = value & 8 > 0
+        self.once_only = value & 16 > 0
 
     @property
     def path_on_choice(self) -> Path:
         if self._path_on_choice and self._path_on_choice.is_relative:
-            choice_target = self.choice_target
-            if choice_target:
+            if choice_target := self.choice_target:
                 self._path_on_choice = choice_target.path
         return self._path_on_choice
 
     @path_on_choice.setter
-    def path_on_choice(self, path: Path):
-        self._path_on_choice = path
+    def path_on_choice(self, value: Path):
+        self._path_on_choice = value
 
     @property
     def path_string_on_choice(self) -> str:
