@@ -103,7 +103,7 @@ class Story(InkObject):
             choice = self.current_choices[index]
         except IndexError:
             raise RuntimeError("Choice out of range")
-        
+
         if self._on_make_choice:
             self._on_make_choice(choice)
 
@@ -433,8 +433,6 @@ class Story(InkObject):
                 name = object.variable_divert_name
                 content = self.state.variables_state.get_variable_with_name(name)
 
-                print(content)
-
                 if content is None:
                     self.add_error(
                         "Tried to divert using a target to a variable that "
@@ -446,8 +444,6 @@ class Story(InkObject):
                         f"variable '{name}' didn't contain a divert target, it "
                         f"contained '{content}'"
                     )
-
-                print(content)
 
                 self.state.diverted_pointer = self.pointer_at_path(content.target_path)
             elif object.is_external:
@@ -944,9 +940,7 @@ class Story(InkObject):
         if self._profiler:
             self._profiler.step(self.state.call_stack)
 
-        print(pointer)
         current_content = pointer.resolve()
-        print(current_content)
         is_logic_or_flow_control = self.perform_logic_and_flow_control(current_content)
 
         # has flow been forced to end by flow control above?

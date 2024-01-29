@@ -4,6 +4,7 @@ import time
 import typing as t
 import warnings
 
+from ..compiler.json import JSONCompiler
 from .call_stack import CallStack
 from .choice import Choice
 from .container import Container
@@ -480,17 +481,18 @@ class State:
 
         data = {
             "currentFlowName": self._current_flow.name,
+            "evalStack": [
+                JSONCompiler.dump_runtime_object(e) for e in self.evaluation_stack
+            ],
             "flows": flows,
             "inkFormatVersion": self.story.INK_VERSION_CURRENT,
             "inkSaveVersion": self.INK_SAVE_STATE_VERSION,
             "previousRandom": self.previous_random,
             "storySeed": self.story_seed,
             "turnIndices": self._turn_indices,
+            "variablesState": self.variables_state.to_dict(),
             "visitCounts": self._visit_counts,
         }
-
-        # writer.WriteProperty("variablesState", variablesState.WriteJson);
-        # writer.WriteProperty("evalStack", w => Json.WriteListRuntimeObjs(w, evaluationStack));
 
         if self.diverted_pointer:
             data["currentDivertTarget"] = str(self.diverted_pointer.path)

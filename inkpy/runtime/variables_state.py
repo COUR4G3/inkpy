@@ -1,5 +1,6 @@
 import typing as t
 
+from ..compiler.json import JSONCompiler
 from .call_stack import CallStack
 from .exceptions import StoryException
 from .object import InkObject
@@ -8,6 +9,8 @@ from .variable_assignment import VariableAssignment
 
 
 class VariablesState:
+    dont_save_default_values = False
+
     def __init__(self, call_stack: CallStack, list_definitions=None):
         self._batch_observing_variable_changes = False
         self._call_stack = call_stack
@@ -53,8 +56,8 @@ class VariablesState:
             if isinstance(value, VariablePointerValue):
                 value = self.resolve_variable_pointer(value)
         else:
-            existing_pointer = True
-            while existing_pointer:
+            existing_pointer = False
+            while existing_pointer is not None:
                 existing_pointer = self.get_raw_variable_with_name(name, index)
                 if isinstance(existing_pointer, VariablePointerValue):
                     name = existing_pointer.variable_name
@@ -158,6 +161,19 @@ class VariablesState:
 
     def snapshot_default_globals(self):
         self._default_global_variables = self._global_variables.copy()
+
+    def to_dict(self) -> dict[str, t.Any]:
+        data = {}
+
+        for name, value in self._global_variables.items():
+            if self.dont_save_default_values:
+                default_value = self._default_global_variables.get(name)
+                if default_value == value:
+                    continue
+
+            data[name] = JSONCompiler.dump_runtime_object(value)
+
+        return data
 
     def try_get_default_variable_value(self, name: str) -> InkObject | None:
         return self._default_global_variables.get(name)

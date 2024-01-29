@@ -108,11 +108,12 @@ class JSONCompiler:
     def _dump_list_definition(self, list_definitions):
         return {}
 
-    def _dump_runtime_container(self, container: Container, without_name: bool = False):
+    @classmethod
+    def _dump_runtime_container(cls, container: Container, without_name: bool = False):
         data = []
 
         for content in container.content:
-            data.append(self._dump_runtime_object(content))
+            data.append(cls.dump_runtime_object(content))
 
         named_only_content = container.named_only_content
         has_name_property = container.has_valid_name and not without_name
@@ -126,7 +127,7 @@ class JSONCompiler:
 
             if named_only_content:
                 for name, content in named_only_content.items():
-                    terminator_data[name] = self._dump_runtime_container(
+                    terminator_data[name] = cls._dump_runtime_container(
                         content, without_name=True
                     )
 
@@ -142,9 +143,10 @@ class JSONCompiler:
 
         return data
 
-    def _dump_runtime_object(self, obj: "InkObject"):
+    @classmethod
+    def dump_runtime_object(cls, obj: "InkObject"):
         if isinstance(obj, Container):
-            return self._dump_runtime_container(obj)
+            return cls._dump_runtime_container(obj)
 
         if isinstance(obj, Divert):
             key = "->"
@@ -188,7 +190,7 @@ class JSONCompiler:
             return f"^{obj.value}"
 
         if isinstance(obj, ListValue):
-            self._dump_ink_list(obj)
+            cls._dump_ink_list(obj)
 
         if isinstance(obj, DivertTargetValue):
             return {"^->": str(obj.value)}
