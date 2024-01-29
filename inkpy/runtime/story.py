@@ -1,4 +1,5 @@
 import logging
+import random
 import time
 import typing as t
 
@@ -19,7 +20,7 @@ from .profiler import Profiler
 from .push_pop import PushPopType
 from .state import State
 from .tag import Tag
-from .value import DivertTargetValue, StringValue, Value, VariablePointerValue
+from .value import DivertTargetValue, IntValue, StringValue, Value, VariablePointerValue
 from .variable_assignment import VariableAssignment
 from .variable_reference import VariableReference
 from .void import Void
@@ -464,12 +465,10 @@ class Story(InkObject):
                 )
 
             if not self.state.diverted_pointer and not object.is_external:
-                if object and object.debug.source:
-                    self.add_error(
-                        f"Divert target doesn't exist: {object.debug.source}"
-                    )
-                else:
-                    self.add_error(f"Divert resolution failed: {object}")
+                # if object:  #  and object.debug.source:
+                #     self.add_error(f"Divert target doesn't exist: {object}")
+                # else:
+                self.add_error(f"Divert resolution failed: {object}")
 
             return True
 
@@ -544,7 +543,7 @@ class Story(InkObject):
             elif object.type == ControlCommand.CommandType.BeginTag:
                 self.state.push_to_output_stream(object)
             elif object.type == ControlCommand.CommandType.EndTag:
-                if self.state.in_string_eval:
+                if self.state.in_string_evaluation:
                     content_stack_for_tag = []
                     output_count_consumed = 0
 
@@ -598,24 +597,111 @@ class Story(InkObject):
                 self.state.in_expression_evaluation = True
                 self.state.push_evaluation_stack(StringValue(text))
 
-            # elif object.type == ControlCommand.CommandType.ChoiceCount:
-            #     raise Exception(object.type)
-            # elif object.type == ControlCommand.CommandType.Turns:
-            #     raise Exception(object.type)
-            # elif object.type == ControlCommand.CommandType.TurnsSince:
-            #     raise Exception(object.type)
-            # elif object.type == ControlCommand.CommandType.ReadCount:
-            #     raise Exception(object.type)
-            # elif object.type == ControlCommand.CommandType.Random:
-            #     raise Exception(object.type)
-            # elif object.type == ControlCommand.CommandType.SeedRandom:
-            #     raise Exception(object.type)
-            # elif object.type == ControlCommand.CommandType.VisitIndex:
-            #     raise Exception(object.type)
-            # elif object.type == ControlCommand.CommandType.SequenceShuffleIndex:
-            #     raise Exception(object.type)
-            # elif object.type == ControlCommand.CommandType.StartThread:
-            #     raise Exception(object.type)
+            elif object.type == ControlCommand.CommandType.ChoiceCount:
+                choice_count = len(self.state.generated_choices)
+                self.state.push_evaluation_stack(IntValue(choice_count))
+            elif object.type == ControlCommand.CommandType.Turns:
+                turn_index = self.state.current_turn_index + 1
+                self.state.push_evaluation_stack(IntValue(turn_index))
+            elif object.type in (
+                ControlCommand.CommandType.TurnsSince,
+                ControlCommand.CommandType.ReadCount,
+            ):
+                target = self.state.pop_evaluation_stack()
+                if not isinstance(target, DivertTargetValue):
+                    message = (
+                        "TURNS_SINCE expected a divert target (knot, stitch, label name), but saw "
+                        f"{target}"
+                    )
+
+                    if isinstance(target, IntValue):
+                        message += (
+                            ". Did you accidentally pass a read count ('knot_name') instead of a "
+                            "target ('-> knot_name')?"
+                        )
+
+                    raise StoryException(message)
+
+                container = self.content_at_path(target.target_path).correct_obj
+
+                if isinstance(container, Container):
+                    if object.type == ControlCommand.CommandType.TurnsSince:
+                        count = self.state.turns_since_for_container(container)
+                    elif object.type == ControlCommand.CommandType.ReadCount:
+                        count = self.state.visit_count_for_container(container)
+                else:
+                    if object.type == ControlCommand.CommandType.TurnsSince:
+                        count = -1  # turn count, default to never/unknown
+                    else:
+                        count = 0  # visit count, assume 0
+
+                    self.add_warning(
+                        f"Failed to find container for {object.type} lookup at "
+                        f"{target.target_path}"
+                    )
+
+                self.state.push_evaluation_stack(IntValue(count))
+
+            elif object.type == ControlCommand.CommandType.Random:
+                max_int = self.state.pop_evaluation_stack()
+                min_int = self.state.pop_evaluation_stack()
+
+                if min_int is None:
+                    raise StoryException(
+                        "Invalid value for minimum parameter of RANDOM(min, max): "
+                        f"{min_int}"
+                    )
+
+                if max_int is None:
+                    raise StoryException(
+                        "Invalid value for maximum parameter of RANDOM(min, max): "
+                        f"{max_int}"
+                    )
+
+                rand_range = max_int.value - min_int.value + 1
+                if -(2**31 - 1) >= rand_range >= (2**31 - 1):
+                    raise StoryException(
+                        "RANDOM was called with a range that exceeds the size that ink "
+                        f"numbers can use: {min_int.value} <-> {max_int.value}"
+                    )
+
+                if min_int >= max_int:
+                    raise StoryException(
+                        f"RANDOM was called with minimum as {min_int.value} and "
+                        f"maximum as {max_int.value}. The maximum must be larger."
+                    )
+
+                seed = self.state.story_seed + self.state.previous_random
+                rand = random.Random(seed)
+                next_rand = rand.randint(0, 2**31 - 1)
+                rand_value = next_rand % rand_range + min_int.value
+
+                self.state.push_evaluation_stack(IntValue(rand_value))
+                self.state.previous_random = next_rand
+
+            elif object.type == ControlCommand.CommandType.SeedRandom:
+                seed = self.state.pop_evaluation_stack()
+                if not isinstance(seed, IntValue):
+                    raise StoryException("Invalid value passed to SEED_RANDOM")
+
+                self.state.story_seed = seed.value
+                self.state.previous_random = 0
+
+                self.state.push_evaluation_stack(Void())
+
+            elif object.type == ControlCommand.CommandType.VisitIndex:
+                current_container = self.state.current_pointer.container
+                count = self.state.visit_count_for_container(current_container) - 1
+
+                self.state.push_evaluation_stack(IntValue(count))
+
+            elif object.type == ControlCommand.CommandType.SequenceShuffleIndex:
+                shuffle_index = self.next_sequence_shuffle_index()
+                self.state.push_evaluation_stack(IntValue(shuffle_index))
+
+            elif object.type == ControlCommand.CommandType.StartThread:
+                pass  # handled in main step function
+
             elif object.type == ControlCommand.CommandType.Done:
                 if self.state.call_stack.can_pop_thread:
                     self.state.call_stack.pop_thread()

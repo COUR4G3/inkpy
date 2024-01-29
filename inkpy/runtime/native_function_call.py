@@ -111,7 +111,10 @@ class NativeFunctionCall(InkObject):
         cls.generate_native_functions_if_necessary()
         return cls._native_functions[name].copy()
 
-    def call(self, parameters: list[InkObject]):
+    def call(self, parameters: list[InkObject] | Value):
+        if isinstance(parameters, Value):
+            parameters = [parameters]
+
         if self.number_of_parameters != len(parameters):
             raise RuntimeError(
                 f"Unexpected number of parameters: {len(parameters)}, expected "
@@ -144,6 +147,7 @@ class NativeFunctionCall(InkObject):
             value1, value2 = parameters
             result = op_for_type(value1.value, value2.value)
         else:
+            (value1,) = parameters
             result = op_for_type(value1.value)
 
         return Value.create(result)
