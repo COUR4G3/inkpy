@@ -19,14 +19,16 @@ class CallStack:
             self.temporary_variables: dict[str, InkObject] = {}
             self.in_expression_eval = in_expression_eval
 
-            self.eval_stack_height_when_pushed: int = -1
+            self.evaluation_stack_height_when_pushed: int = -1
             self.function_start_in_output_stream: int = -1
 
         def copy(self) -> "CallStack.Element":
             copy = CallStack.Element(
                 self.type, self.current_pointer, self.in_expression_eval
             )
-            copy.eval_stack_height_when_pushed = self.eval_stack_height_when_pushed
+            copy.evaluation_stack_height_when_pushed = (
+                self.evaluation_stack_height_when_pushed
+            )
             copy.function_start_in_output_stream = self.function_start_in_output_stream
             return copy
 
@@ -166,7 +168,7 @@ class CallStack:
     def push(
         self,
         type: PushPopType,
-        external_eval_stack_height: int = 0,
+        external_evaluation_stack_height: int = 0,
         output_stream_length_with_pushed: int = 0,
     ):
         element = CallStack.Element(
@@ -175,7 +177,7 @@ class CallStack:
             in_expression_eval=False,
         )
 
-        element.eval_stack_height_when_pushed = external_eval_stack_height
+        element.evaluation_stack_height_when_pushed = external_evaluation_stack_height
         element.function_start_in_output_stream = output_stream_length_with_pushed
 
         self.call_stack.append(element)

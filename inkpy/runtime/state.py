@@ -43,10 +43,13 @@ class State:
         self.output_stream: list["InkObject"] = []
 
         self._current_flow = Flow(self.DEFAULT_FLOW_NAME, story)
+        self._current_text = ""
         self._named_flows: dict[str, Flow] = {}
 
         self._on_did_load_state: t.Optional[self.OnDidLoadState] = None
 
+        self._output_stream_tags_dirty = False
+        self._output_stream_text_dirty = False
         self._turn_indices: dict[str, int] = {}
         self._visit_counts: dict[str, int] = {}
 

@@ -196,6 +196,14 @@ class Story(InkObject):
 
         self._continue(limit_async)
 
+    def continue_maximally(self) -> str:
+        self.if_async_we_cant("continue_maximally")
+
+        text = ""
+        while self.can_continue:
+            text += self.continue_()
+        return text
+
     def continue_single_step(self) -> bool:
         if self._profiler:
             self._profiler.pre_step()
@@ -480,7 +488,7 @@ class Story(InkObject):
                 ), "Not in expression evaluation"
                 self.state.in_expression_evaluation = False
             elif object.type == ControlCommand.CommandType.EvalOutput:
-                if self.state.eval_stack:
+                if self.state.evaluation_stack:
                     output = self.state.pop_evaluation_stack()
                     if output:
                         text = StringValue(str(output))
