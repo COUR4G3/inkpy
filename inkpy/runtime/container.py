@@ -124,7 +124,7 @@ class Container(NamedContent):
         container = self
         current_object = self
 
-        for component in path.components[start - 1 : length]:
+        for component in path.components[start:length]:
             if not isinstance(container, Container):
                 result.approximate = True
                 break
@@ -177,6 +177,17 @@ class Container(NamedContent):
         if value & Container.CountFlags.CountStartOnly > 0:
             self.count_at_start_only = True
 
+    def internal_path_to_first_leaf_content(self) -> Path:
+        components = []
+
+        container = self
+        while isinstance(container, Container):
+            if len(container.content) > 0:
+                components.append(Path.Component(0))
+                container = container.content[0]
+
+        return Path(components)
+
     @property
     def named_only_content(self) -> dict[str, NamedContent]:
         named_only_content = self.named_content.copy()
@@ -201,15 +212,11 @@ class Container(NamedContent):
 
     @property
     def path_to_first_leaf_content(self) -> Path:
-        components = []
-        container = self
-
-        while isinstance(container, Container):
-            if len(container.content) > 0:
-                components.append(Path.Component(0))
-                container = container.content[0]
-
-        return Path(components)
+        if not self._path_to_first_leaf_content:
+            self._path_to_first_leaf_content = self.path.path_by_appending_path(
+                self.internal_path_to_first_leaf_content
+            )
+        return self._path_to_first_leaf_content
 
     def try_add_named_content(self, content: InkObject):
         if isinstance(content, NamedContent) and content.has_valid_name:

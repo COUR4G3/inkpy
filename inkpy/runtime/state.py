@@ -34,6 +34,7 @@ class State:
         self.story = story
 
         self.current_errors: list[str] = []
+        self.current_turn_index: int = 0
         self.current_warnings: list[str] = []
         self.did_safe_exit = False
         self.diverted_pointer: t.Optional[Pointer] = None
@@ -638,5 +639,5 @@ class State:
             )
 
         container_path_string = str(container.path)
-        count = self.visit_counts.get(container_path_string, 0)
+        count = self._visit_counts.get(container_path_string, 0)
         return count

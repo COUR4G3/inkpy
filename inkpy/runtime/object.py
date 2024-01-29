@@ -84,10 +84,10 @@ class InkObject:
 
                 while container:
                     if isinstance(child, NamedContent) and child.has_valid_name:
-                        components.append(Path.Component(child.name))
+                        components.insert(0, Path.Component(child.name))
                     else:
-                        components.append(
-                            Path.Component(container.content.index(child))
+                        components.insert(
+                            0, Path.Component(container.content.index(child))
                         )
 
                     child = container

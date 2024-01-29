@@ -97,6 +97,19 @@ class Story(InkObject):
     def can_continue(self) -> bool:
         return self._state.can_continue
 
+    def choose_choice_index(self, index: int):
+        try:
+            choice = self.current_choices[index]
+        except IndexError:
+            raise RuntimeError("Choice out of range")
+        
+        if self._on_make_choice:
+            self._on_make_choice(choice)
+
+        self.state.call_stack.current_thread = choice.thread_at_generation
+
+        self.choose_path(choice.target_path)
+
     def choose_path(self, path: Path, incrementing_turn_index: bool = True):
         self.state.set_chosen_path(path, incrementing_turn_index)
         self.visit_changed_containers_due_to_divert()
@@ -230,6 +243,10 @@ class Story(InkObject):
             self._profiler.post_snapshot()
 
         return False
+
+    @property
+    def current_choices(self) -> list[Choice]:
+        return self._state.current_choices
 
     @property
     def current_errors(self) -> list[str]:
@@ -414,6 +431,8 @@ class Story(InkObject):
             if object.has_variable_target:
                 name = object.variable_divert_name
                 content = self.state.variables_state.get_variable_with_name(name)
+
+                print(content)
 
                 if content is None:
                     self.add_error(
@@ -693,6 +712,18 @@ class Story(InkObject):
 
         return pointer
 
+    def pop_choice_string_and_tags(self):
+        tags = []
+        choice_only_string_value = self.state.pop_evaluation_stack()
+
+        while len(self.state.evaluation_stack) > 1 and isinstance(
+            self.state.peek_evaluation_stack(), Tag
+        ):
+            tag = self.state.pop_evaluation_stack()
+            tags.insert(0, tag.text)
+
+        return choice_only_string_value.value, tags
+
     def process_choice(self, choice_point: ChoicePoint) -> Choice:
         show_choice = True
 
@@ -843,7 +874,7 @@ class Story(InkObject):
         if isinstance(current_content, ChoicePoint):
             choice = self.process_choice(current_content)
             if choice:
-                self.state.generate_choices.append(choice)
+                self.state.generated_choices.append(choice)
 
             current_content = None
             should_add_to_stream = False

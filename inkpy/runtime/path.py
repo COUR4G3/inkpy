@@ -51,7 +51,7 @@ class Path:
         self.is_relative = is_relative
         self.components = components
         if tail:
-            self.components.append(tail)
+            self.components.append(tail.components)
 
     def __eq__(self, other):
         if not isinstance(other, Path):
@@ -90,7 +90,7 @@ class Path:
             self._components.clear()
             self._components = [Path.Component]
         elif isinstance(value, list):
-            self._components = value
+            self._components = value.copy()
         else:
             if value.startswith("."):
                 self.is_relative = True
@@ -118,7 +118,7 @@ class Path:
             else:
                 break
 
-        for component in self.components[:-upward_moves]:
+        for component in self.components[1 : -upward_moves - 1]:
             p.components.append(component)
 
         for component in path.components[upward_moves:]:
