@@ -732,7 +732,7 @@ class State:
 
         if inner_end > inner_start:
             inner_text = text.value[inner_start : inner_start + inner_end]
-            texts.append(inner_text)
+            texts.append(StringValue(inner_text))
 
         if (
             tail_last_newline_idx != -1
