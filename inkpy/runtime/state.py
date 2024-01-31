@@ -355,8 +355,8 @@ class State:
         else:
             self._current_flow = Flow(self.DEFAULT_FLOW_NAME, self.story)
             # _currentFlow.callStack.SetJsonToken ((Dictionary < string, object > )jObject ["callstackThreads"], story);
-            # _currentFlow.outputStream = Json.JArrayToRuntimeObjList ((List<object>)jObject ["outputStream"]);
-            # _currentFlow.currentChoices = Json.JArrayToRuntimeObjList<Choice>((List<object>)jObject ["currentChoices"]);
+            # _currentFlow.outputStream = Json.arrayToRuntimeObjList ((List<object>)jObject ["outputStream"]);
+            # _currentFlow.currentChoices = Json.arrayToRuntimeObjList<Choice>((List<object>)jObject ["currentChoices"]);
 
             # object jChoiceThreadsObj = null;
             # jObject.TryGetValue("choiceThreads", out jChoiceThreadsObj);
@@ -367,7 +367,7 @@ class State:
         # variablesState.SetJsonToken((Dictionary < string, object> )jObject["variablesState"]);
         # variablesState.callStack = _currentFlow.callStack;
 
-        # evaluationStack = Json.JArrayToRuntimeObjList ((List<object>)jObject ["evalStack"]);
+        # evaluationStack = Json.arrayToRuntimeObjList ((List<object>)jObject ["evalStack"]);
 
         if current_divert_target_path := data.get("currentDivertTarget"):
             divert_path = Path(current_divert_target_path)

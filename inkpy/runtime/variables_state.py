@@ -1,6 +1,6 @@
 import typing as t
 
-from ..compiler.json import JSONCompiler
+from . import serialisation
 from .call_stack import CallStack
 from .exceptions import StoryException
 from .object import InkObject
@@ -197,7 +197,7 @@ class VariablesState:
                 if default_value == value:
                     continue
 
-            data[name] = JSONCompiler.dump_runtime_object(value)
+            data[name] = serialisation.dump_runtime_object(value)
 
         return data
 

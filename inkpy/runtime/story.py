@@ -1,11 +1,13 @@
+import json
 import logging
 import random
 import time
 import typing as t
+import warnings
 
 from contextlib import contextmanager
 
-from ..parser.json import JSONParser
+from . import serialisation
 from .choice import Choice
 from .choice_point import ChoicePoint
 from .container import Container
@@ -31,6 +33,7 @@ logger = logging.getLogger(__name__)
 
 class Story(InkObject):
     INK_VERSION_CURRENT: int = 21
+    INK_VERSION_MINIMUM_COMPATIBLE: int = 18
 
     OnChoosePathString = t.Callable[[str, list[InkObject]], None]
     OnCompleteEvalFunc = t.Callable[[str, list[InkObject], str, InkObject], None]
@@ -40,15 +43,52 @@ class Story(InkObject):
     OnMakeChoice = t.Callable[[Choice], None]
 
     def __init__(self, input: str | t.TextIO):
-        parser = JSONParser()
-        main_content_container, self.list_definitions = parser.parse(input)
+        if isinstance(input, str):
+            data = json.loads(input)
+        else:
+            data = json.load(input)
+
+        version = data.get("inkVersion")
+        if not version:
+            raise ValueError("Version of ink could not be found")
+
+        try:
+            version = int(version)
+        except ValueError:
+            raise ValueError(f"Version of ink could not be parsed: {version}")
+
+        if version > self.INK_VERSION_CURRENT:
+            raise RuntimeError(
+                "Version of ink used to build story was newer than the current version "
+                "of the parser"
+            )
+        elif version < self.INK_VERSION_MINIMUM_COMPATIBLE:
+            raise RuntimeError(
+                "Version of ink used to build story is too old to be loaded by this "
+                "version of the parser"
+            )
+        elif version != self.INK_VERSION_CURRENT:
+            warnings.warn(
+                "Version of ink used to build story doesn't match current version of "
+                "parser. Non-critical, but recommend synchronising.",
+                RuntimeWarning,
+            )
+
+        root = data.get("root")
+        if not root:
+            raise ValueError("Root node for ink not found")
+
+        main_content_container = serialisation.token_to_runtime_object(root)
+        self._main_content_container: Container = main_content_container
+
+        list_definitions = data.get("listDefs")
+        self.list_definitions = None
 
         self.allow_external_function_fallbacks = True
 
         self._async_continue_active = False
         self._async_saving = False
         self._has_validated_externals = False
-        self._main_content_container: Container = main_content_container
 
         self._on_choose_path_string: t.Optional[self.OnChoosePathString] = None
         self._on_complete_evaluate_function: t.Optional[self.OnCompleteEvalFunc] = None
