@@ -4,6 +4,7 @@ from ..compiler.json import JSONCompiler
 from .call_stack import CallStack
 from .exceptions import StoryException
 from .object import InkObject
+from .state_patch import StatePatch
 from .value import Value, VariablePointerValue
 from .variable_assignment import VariableAssignment
 
@@ -19,7 +20,12 @@ class VariablesState:
         self._default_global_variables: dict[str, InkObject] = {}
         self._global_variables: dict[str, InkObject] = {}
 
+        self.patch: t.Optional[StatePatch] = None
+
     def __getitem__(self, name: str) -> t.Any:
+        if self.patch and (value := self.patch.try_get_global(name)):
+            return value.value
+
         value = self._global_variables.get(name)
 
         if value is None:
@@ -42,6 +48,16 @@ class VariablesState:
                 raise RuntimeError(f"Invalid value passed to VariableState: {value!r}")
 
         self.set_global(name, value_obj)
+
+    def apply_patch(self):
+        for name, value in self.patch.globals.items():
+            self._global_variables[name] = value
+
+        if self._batch_observing_variable_changes:
+            for name in self.patch.changed_variables:
+                self._changed_variables_for_batch_obs.add(name)
+
+        self.patch = None
 
     def assign(self, assign: VariableAssignment, value: InkObject):
         name = assign.variable_name
@@ -107,6 +123,9 @@ class VariablesState:
         self, name: str, index: int = -1
     ) -> InkObject | None:
         if index <= 0:
+            if self.patch and (value := self.patch.try_get_global(name)):
+                return value
+
             value = self._global_variables.get(name)
             if value is not None:
                 return value
@@ -149,13 +168,20 @@ class VariablesState:
             return VariablePointerValue(value.variable_name, index)
 
     def set_global(self, name: str, value: InkObject):
-        old_value = self._global_variables.get(name)
+        if not self.patch or (old_value := self.patch.try_get_global(name)):
+            old_value = self._global_variables.get(name)
 
-        self._global_variables[name] = value
+        if self.patch:
+            self.patch.set_global(name, value)
+        else:
+            self._global_variables[name] = value
 
         if self.variable_changed_event is not None and value != old_value:
             if self.batch_observing_variable_changes:
-                self._changed_variables_for_batch_obs.add(name)
+                if self.patch:
+                    self.patch.add_changed_variable(name)
+                else:
+                    self._changed_variables_for_batch_obs.add(name)
         else:
             self.variable_changed_event(name, value)
 

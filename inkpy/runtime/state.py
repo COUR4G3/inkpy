@@ -14,6 +14,7 @@ from .flow import Flow
 from .path import Path
 from .pointer import Pointer
 from .push_pop import PushPopType
+from .state_patch import StatePatch
 from .value import ListValue, StringValue
 from .variables_state import VariablesState
 
@@ -50,6 +51,7 @@ class State:
 
         self._output_stream_tags_dirty = False
         self._output_stream_text_dirty = False
+        self._patch: t.Optional[StatePatch] = None
         self._turn_indices: dict[str, int] = {}
         self._visit_counts: dict[str, int] = {}
 
@@ -65,6 +67,20 @@ class State:
     @property
     def alive_flow_names(self) -> list[str]:
         return [name for name in self._named_flows if name != self.DEFAULT_FLOW_NAME]
+
+    def apply_any_patch(self):
+        if not self._patch:
+            return
+
+        self.variables_state.apply_patch()
+
+        for path, count in self._patch.visit_counts.items():
+            self._visit_counts[str(path)] = count
+
+        for path, index in self._patch.turn_indices.items():
+            self._turn_indices[str(path)] = index
+
+        self._patch = None
 
     @property
     def call_stack(self) -> CallStack:
@@ -102,6 +118,48 @@ class State:
                 output += c
 
         return output
+
+    def copy_and_start_patching(self) -> "State":
+        copy = State(self.story)
+
+        copy._patch = StatePatch(self._patch)
+
+        copy._current_flow.name = self._current_flow.name
+        copy._current_flow.call_stack = CallStack(self._current_flow.call_stack)
+        copy._current_flow.current_choices = self._current_flow.current_choices.copy()
+        copy._current_flow.output_stream = self._current_flow.output_stream.copy()
+        copy.output_stream_dirty()
+
+        copy._named_flows = self._named_flows.copy()
+        copy._named_flows[self._current_flow.name] = copy._current_flow
+
+        if self.has_error:
+            copy.current_errors = self.current_errors.copy()
+
+        if self.has_warning:
+            copy.current_warnings = self.current_warnings.copy()
+
+        copy.variables_state = self.variables_state
+        copy.variables_state.call_stack = copy.call_stack
+        copy.variables_state.patch = copy._patch
+
+        copy.evaluation_stack.extend(self.evaluation_stack)
+
+        if self.diverted_pointer:
+            copy.diverted_pointer = self.diverted_pointer
+
+        copy.previous_pointer = self.previous_pointer
+
+        copy._visit_counts = self._visit_counts
+        copy._turn_indices = self._turn_indices
+
+        copy.current_turn_index = self.current_turn_index
+        copy.story_seed = self.story_seed
+        copy.previous_random = self.previous_random
+
+        copy.did_safe_exit = self.did_safe_exit
+
+        return copy
 
     @property
     def current_choices(self) -> list[Choice]:
@@ -463,6 +521,10 @@ class State:
         self.output_stream.clear()
         if objs:
             self.output_stream.extend(objs)
+
+    def restore_after_patch(self):
+        self.variables_state.call_stack = self.call_stack
+        self.variables_state.patch = self._patch
 
     def set_chosen_path(self, path: "Path", incrementing_turn_index: bool):
         self._current_flow.current_choices.clear()

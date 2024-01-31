@@ -89,6 +89,12 @@ class Story(InkObject):
     def async_continue_complete(self) -> bool:
         return not self._async_continue_active
 
+    def background_save_complete(self):
+        if self._state_snapshot_at_last_newline:
+            self._state.apply_any_patch()
+
+        self._async_saving = False
+
     def build_string_of_heirachy(self) -> str:
         return self._main_content_container.build_string_of_heirachy(
             self._state.current_pointer.resolve()
@@ -253,6 +259,20 @@ class Story(InkObject):
 
         return False
 
+    def copy_state_for_background_thread_save(self) -> State:
+        self.if_async_we_cant("start saving on a background thread")
+
+        if self._async_saving:
+            raise RuntimeError(
+                "Story is already in background saving mode, can't call "
+                "copy_state_for_background_thread_save again!"
+            )
+
+        state_to_save = self._state
+        self._state = self._state.copy_and_start_patching()
+        self._async_saving = True
+        return state_to_save
+
     @property
     def current_choices(self) -> list[Choice]:
         return self._state.current_choices
@@ -264,6 +284,12 @@ class Story(InkObject):
     @property
     def current_warnings(self) -> list[str]:
         return self._state.current_warnings
+
+    def discard_snapshot(self):
+        if not self._async_saving:
+            self._state.apply_any_patch()
+
+        self._state_snapshot_at_last_newline = None
 
     def end_profiling(self):
         """End profiling for this story.
@@ -896,6 +922,15 @@ class Story(InkObject):
 
         self.reset_globals()
 
+    def restore_state_snapshot(self):
+        self._state_snapshot_at_last_newline.restore_after_patch()
+
+        self._state = self._state_snapshot_at_last_newline
+        self._state_snapshot_at_last_newline = None
+
+        if not self._async_saving:
+            self._state.apply_any_patch()
+
     def start_profiling(self):
         """Start recording ink profiling information for this story.
 
@@ -925,6 +960,10 @@ class Story(InkObject):
 
         """
         return self._state
+
+    def state_snapshot(self):
+        self._state_snapshot_at_last_newline = self._state
+        self._state = self._state.copy_and_start_patching()
 
     def step(self):
         should_add_to_stream = True
