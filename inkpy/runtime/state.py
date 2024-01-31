@@ -15,6 +15,7 @@ from .path import Path
 from .pointer import Pointer
 from .push_pop import PushPopType
 from .state_patch import StatePatch
+from .tag import Tag
 from .value import ListValue, StringValue
 from .variables_state import VariablesState
 
@@ -44,7 +45,8 @@ class State:
         self.output_stream: list["InkObject"] = []
 
         self._current_flow = Flow(self.DEFAULT_FLOW_NAME, story)
-        self._current_text = ""
+        self._current_tags: list[str] = ""
+        self._current_text: str = ""
         self._named_flows: dict[str, Flow] = {}
 
         self._on_did_load_state: t.Optional[self.OnDidLoadState] = None
@@ -184,6 +186,45 @@ class State:
     @current_pointer.setter
     def current_pointer(self, value: Pointer | None):
         self.call_stack.current_element.current_pointer = value
+
+    @property
+    def current_tags(self):
+        if self._output_stream_tags_dirty:
+            self._current_tags.clear()
+
+            in_tag = False
+            incomplete_tag = ""
+
+            for content in self.output_stream:
+                if isinstance(content, ControlCommand):
+                    if content.type == ControlCommand.CommandType.BeginTag:
+                        if in_tag and incomplete_tag:
+                            text = self.clean_output_whitespace(incomplete_tag)
+                            self._current_tags.append(text)
+                            incomplete_tag = ""
+                        in_tag = True
+                    elif content.type == ControlCommand.CommandType.EndTag:
+                        if incomplete_tag:
+                            text = self.clean_output_whitespace(incomplete_tag)
+                            self._current_tags.append(text)
+                            incomplete_tag = ""
+                        in_tag = False
+
+                elif in_tag:
+                    if isinstance(content, StringValue):
+                        incomplete_tag += content.value
+
+                else:
+                    if isinstance(content, Tag) and content.text:
+                        self._current_tags.append(content)
+
+            if incomplete_tag:
+                text = self.clean_output_whitespace(incomplete_tag)
+                self._current_tags.append(text)
+
+            self._output_stream_tags_dirty = False
+
+        return self._current_tags
 
     @property
     def current_text(self) -> str:

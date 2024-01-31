@@ -194,7 +194,7 @@ class Story(InkObject):
 
     def continue_(self) -> str:
         self.continue_async(0.0)
-        return self._state.current_text
+        return self.current_text
 
     def continue_async(self, limit_async: float = 0.0):
         if not self._has_validated_externals:
@@ -275,11 +275,29 @@ class Story(InkObject):
 
     @property
     def current_choices(self) -> list[Choice]:
-        return self._state.current_choices
+        choices = []
+        for choice in self._state.current_choices:
+            if choice.is_invisible_default:
+                continue
+
+            choice.index = len(choices)
+            choices.append(choice)
+
+        return choices
 
     @property
     def current_errors(self) -> list[str]:
         return self._state.current_errors
+
+    @property
+    def current_tags(self) -> list[str]:
+        self.if_async_we_cant("call current_tags since it's a work in progress")
+        return self.state.current_tags
+
+    @property
+    def current_text(self) -> list[str]:
+        self.if_async_we_cant("call current_text since it's a work in progress")
+        return self.state.current_text
 
     @property
     def current_warnings(self) -> list[str]:
