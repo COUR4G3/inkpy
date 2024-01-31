@@ -127,12 +127,14 @@ class Container(NamedContent):
         for component in path.components[start:length]:
             if not isinstance(container, Container):
                 result.approximate = True
+                print("got no container approximate for", path)
                 break
 
             object = container.content_with_path_component(component)
 
             if object is None:
                 result.approximate = True
+                print("got no object approximate for", path)
                 break
 
             current_object = object

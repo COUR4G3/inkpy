@@ -89,7 +89,9 @@ class Divert(InkObject):
             target = self.resolve_path(self._target_path).obj
 
             if self._target_path.last_component.is_index:
-                container = isinstance(target.path, Container) and target.parent or None
+                container = (
+                    isinstance(target.parent, Container) and target.parent or None
+                )
                 index = self._target_path.last_component.index
                 self._target_pointer = Pointer(container, index)
             else:

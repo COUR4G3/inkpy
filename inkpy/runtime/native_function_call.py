@@ -140,7 +140,7 @@ class NativeFunctionCall(InkObject):
         op_for_type = self._operator_functions.get(coerced_type)
         if not op_for_type:
             raise StoryException(
-                f"Cannot perform operation '{self.name}' on '{coerced_type}'"
+                f"Cannot perform operation '{self.name}' on '{coerced_type.name}'"
             )
 
         if self.number_of_parameters == 2:
@@ -167,7 +167,7 @@ class NativeFunctionCall(InkObject):
             and value1.type != ValueType.List
             or value2.type != ValueType.List
         ):
-            result = self.op(value1.is_truthy, value2.is_thruthy)
+            result = self.op(value1.is_truthy, value2.is_truthy)
             return BoolValue(result)
 
         if value1.type == ValueType.List and value2.type == ValueType.List:

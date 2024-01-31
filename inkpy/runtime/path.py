@@ -126,7 +126,13 @@ class Path:
 
         return p
 
+    @staticmethod
+    def self():
+        return Path(is_relative=True)
+
     @property
     def tail(self) -> "Path":
         if len(self._components) >= 2:
             return Path(self._components[1:])
+        else:
+            return Path.self()
