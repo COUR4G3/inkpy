@@ -431,15 +431,20 @@ class State:
         self.call_stack.pop(pop_type)
 
     def pop_evaluation_stack(
-        self, count: int = 1
+        self, count: int = -1
     ) -> t.Union["InkObject", list["InkObject"]]:
+        return_list = True
+        if count == -1:
+            count = 1
+            return_list = False
+
         if count > len(self.evaluation_stack):
             raise RuntimeError("Trying to pop too many objects from evaluation stack")
 
         objs = self.evaluation_stack[-count:]
         self.evaluation_stack[:] = self.evaluation_stack[:-count]
 
-        if count == 1:
+        if not return_list:
             return objs[0]
         return objs
 
