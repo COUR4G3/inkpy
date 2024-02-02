@@ -4,7 +4,7 @@ import time
 import typing as t
 import warnings
 
-from ..compiler.json import JSONCompiler
+from . import serialisation
 from .call_stack import CallStack
 from .choice import Choice
 from .container import Container
@@ -559,6 +559,15 @@ class State:
 
         self.output_stream_dirty()
 
+    def _remove_flow(self, name: str):
+        if name == self.DEFAULT_FLOW_NAME:
+            raise RuntimeError("Cannot destroy default flow")
+
+        if self._current_flow.name == name:
+            self._switch_to_default_flow()
+
+        self._named_flows.pop(name)
+
     def reset_errors(self):
         self.current_errors.clear()
         self.current_warnings.clear()
@@ -584,6 +593,28 @@ class State:
         if incrementing_turn_index:
             self.current_turn_index += 1
 
+    def _switch_flow(self, name: str):
+        if not self._named_flows:
+            self._named_flows[self.DEFAULT_FLOW_NAME] = self._current_flow
+
+        if name == self._current_flow.name:
+            return
+
+        if not (flow := self._named_flows.get(name)):
+            flow = Flow(name, self.story)
+            self._named_flows[name] = flow
+
+        self._current_flow = flow
+        self.variables_state.call_stack = self._current_flow.call_stack
+
+        self.output_stream_dirty()
+
+    def _switch_to_default_flow(self, name: str):
+        if not self._named_flows:
+            return
+
+        self._switch_flow(self.DEFAULT_FLOW_NAME)
+
     def to_dict(self) -> dict[str, t.Any]:
         flows = {n: f.to_dict() for n, f in self._named_flows.items()}
 
@@ -593,7 +624,7 @@ class State:
         data = {
             "currentFlowName": self._current_flow.name,
             "evalStack": [
-                JSONCompiler.dump_runtime_object(e) for e in self.evaluation_stack
+                serialisation.dump_runtime_object(e) for e in self.evaluation_stack
             ],
             "flows": flows,
             "inkFormatVersion": self.story.INK_VERSION_CURRENT,

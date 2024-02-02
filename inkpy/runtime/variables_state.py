@@ -207,5 +207,5 @@ class VariablesState:
     def value_at_variable_pointer(self, value: VariablePointerValue) -> InkObject:
         return self.get_variable_with_name(value.variable_name, value.index)
 
-    def variable_changed_event(self, name: str, value: t.Any):
+    def variable_changed_event(self, name: str, value: Value):
         return

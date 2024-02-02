@@ -1,3 +1,4 @@
+import inspect
 import locale
 import typing as t
 
@@ -30,6 +31,9 @@ class Value(InkObject, metaclass=ABCMeta):
         return bool(self.value)
 
     def __repr__(self):
+        curframe = inspect.currentframe()
+        calframe = inspect.getouterframes(curframe, 2)
+        print("caller name:", calframe[1][3])
         return repr(self.value)
 
     @abstractmethod

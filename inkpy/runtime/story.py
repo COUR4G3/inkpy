@@ -20,6 +20,7 @@ from .path import Path
 from .pointer import Pointer
 from .profiler import Profiler
 from .push_pop import PushPopType
+from .search_result import SearchResult
 from .state import State
 from .tag import Tag
 from .value import DivertTargetValue, IntValue, StringValue, Value, VariablePointerValue
@@ -29,6 +30,15 @@ from .void import Void
 
 
 logger = logging.getLogger(__name__)
+
+
+class ExternalFunctionDefinition:
+    def __init__(self, function: t.Callable, lookahead_safe: bool):
+        self.function = function
+        self.lookahead_safe = lookahead_safe
+
+    def __call__(self, *args, **kwargs):
+        return self.function(*args, **kwargs)
 
 
 class Story(InkObject):
@@ -88,6 +98,7 @@ class Story(InkObject):
 
         self._async_continue_active = False
         self._async_saving = False
+        self._externals: dict[str, ExternalFunctionDefinition] = {}
         self._has_validated_externals = False
 
         self._on_choose_path_string: t.Optional[self.OnChoosePathString] = None
@@ -103,13 +114,11 @@ class Story(InkObject):
         self._state_snapshot_at_last_newline: t.Optional[State] = None
         self._state: State
         self._temporary_evaluation_container: t.Optional[Container] = None
+        self._variable_observers: dict[str, list[t.Callable[[str, t.Any], None]]] = {}
 
         super().__init__()
 
         self.reset_state()
-
-    def __repr__(self):
-        return self.build_string_of_heirachy()
 
     def add_error(self, message: str, is_warning: bool = False):
         if is_warning:
@@ -134,6 +143,21 @@ class Story(InkObject):
             self._state.apply_any_patch()
 
         self._async_saving = False
+
+    def bind_external_function(
+        self, name: str, f: t.Callable | None = None, lookahead_safe: bool = False
+    ):
+        def decorator(f):
+            self.if_async_we_cant("bind an external function")
+
+            if name in self._externals:
+                raise RuntimeError(f"Function '{name}' has already been bound")
+
+            self._externals[name] = ExternalFunctionDefinition(f, lookahead_safe)
+
+            return f
+
+        return f and decorator(f) or f
 
     def build_string_of_heirachy(self) -> str:
         return self._main_content_container.build_string_of_heirachy(
@@ -160,6 +184,9 @@ class Story(InkObject):
     def choose_path(self, path: Path, incrementing_turn_index: bool = True):
         self.state.set_chosen_path(path, incrementing_turn_index)
         self.visit_changed_containers_due_to_divert()
+
+    def content_at_path(self, path: Path) -> SearchResult:
+        return self.main_content_container.content_at_path(path)
 
     def _continue(self, limit_async: float = 0.0):
         if self._profiler:
@@ -359,6 +386,10 @@ class Story(InkObject):
         self._profiler = None
 
     @property
+    def global_tags(self) -> list[str]:
+        return self.tags_at_start_of_flow_container_with_path_string("")
+
+    @property
     def has_error(self) -> bool:
         return len(self._state.current_errors) > 0
 
@@ -422,6 +453,11 @@ class Story(InkObject):
 
         return truthy
 
+    def knot_container_with_name(self, name: str) -> Container:
+        container = self.main_content_container.named_content.get(name)
+        if isinstance(container, Container):
+            return container
+
     @property
     def main_content_container(self) -> Container:
         if self._temporary_evaluation_container:
@@ -470,6 +506,38 @@ class Story(InkObject):
 
             if did_pop and self.state.current_pointer:
                 self.next_content()
+
+    def observe_variable(
+        self, name: str, observer: t.Callable[[str, t.Any], None] | None = None
+    ):
+        self.if_async_we_cant("observe a new variable")
+
+        def decorator(observer):
+            if not self.state.variables_state.global_variable_exists_with_name(name):
+                raise RuntimeError(
+                    f"Cannot observe variable '{name}' because it wasn't declared in "
+                    "the ink story"
+                )
+
+            if name in self._variable_observers:
+                self._variable_observers[name].append(observer)
+            else:
+                self._variable_observers[name] = [observer]
+
+            return observer
+
+        return observer and decorator(observer) or decorator
+
+    def observe_variables(
+        self, names: list[str], observer: t.Callable[[str, t.Any], None] | None = None
+    ):
+        def decorator(observer):
+            for name in names:
+                self.observe_variable(name, observer)
+
+            return observer
+
+        return observer and decorator(observer) or decorator
 
     def on_choose_path_string(self, f: t.Optional[OnChoosePathString] = None):
         def decorator(f):
@@ -948,6 +1016,9 @@ class Story(InkObject):
         finally:
             self.end_profiling()
 
+    def switch_to_default_flow(self, name: str):
+        self.state._remove_flow(self, name)
+
     def reset_callstack(self):
         """Unwinds the callstack to reset story evaluation without changing state."""
         self.if_async_we_cant("reset callstack")
@@ -976,7 +1047,9 @@ class Story(InkObject):
 
         self._state = State(self)
 
-        # TODO: add variable observers
+        self._state.variables_state.variable_changed_event = (
+            self.variable_state_did_change_event
+        )
 
         self.reset_globals()
 
@@ -1111,6 +1184,33 @@ class Story(InkObject):
         finally:
             self._profiler = profiler
 
+    def switch_flow(self, name: str):
+        self.if_async_we_cant("switch flow")
+        if self._async_saving:
+            raise RuntimeError(
+                "Story is already in background saving mode, can't switch flow "
+                f"to {name}"
+            )
+
+        self.state._switch_flow()
+
+    def switch_to_default_flow(self):
+        self.state._switch_to_default_flow()
+
+    def tags_at_start_of_flow_container_with_path_string(self, path: str):
+        path = Path(path)
+
+        container = self.content_at_path(path).container
+        while True:
+            content = container.content[0]
+            if isinstance(content, Container):
+                container = content
+            else:
+                break
+
+    def tags_for_content_path(self, path: str):
+        return self.tags_at_start_of_flow_container_with_path_string(path)
+
     def to_json(self, output: t.Optional[t.TextIO] = None) -> t.Optional[str]:
         """Return JSON representation of the story."""
         compiler = JSONCompiler()
@@ -1132,6 +1232,14 @@ class Story(InkObject):
         self.choose_path(choice.target_path, incrementing_turn_index=False)
 
         return True
+
+    def unbind_external_function(self, name: str):
+        self.if_async_we_cant("unbind an external function")
+
+        if name not in self._externals:
+            raise RuntimeError(f"Function '{name}' has not been bound")
+
+        del self._externals[name]
 
     def validate_external_bindings(
         self,
@@ -1170,6 +1278,19 @@ class Story(InkObject):
             pass
         elif object:
             pass
+
+    def variable_state_did_change_event(self, name: str, value: Value):
+        observers = self._variable_observers.get(name)
+        if not observers:
+            return
+
+        if not isinstance(value, Value):
+            raise RuntimeError(
+                "Tried to get value of a variable that isn't a standard type"
+            )
+
+        for observer in observers:
+            observer(name, value.value)
 
     def visit_container(self, container: Container, at_start: bool):
         if not container.count_at_start_only or at_start:

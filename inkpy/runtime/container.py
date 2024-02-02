@@ -31,9 +31,6 @@ class Container(NamedContent):
 
         super().__init__(**kwargs)
 
-    def __repr__(self):
-        return self.build_string_of_heirachy()
-
     def add_content(self, content: t.Union["InkObject", list["InkObject"]]):
         if isinstance(content, list):
             for item in content:
