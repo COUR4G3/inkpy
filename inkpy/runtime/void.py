@@ -1,7 +1,4 @@
-from .object import InkObject
-
-
-class Void(InkObject):
+class Void:
     def __bool__(self):
         return False
 

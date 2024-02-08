@@ -1,147 +1,39 @@
 # inkpy
 
 This is a Python port of inkle's [ink](https://github.com/inkle/ink), a scripting language for writing interactive
-narrative.
+narrative for use with game and web frameworks.
 
-inkpy aims to be fully feature [compatiable](#compatibility) with the original version but also have a Pythonic API for
-integrating with new and existing game and web frameworks.
+inkpy aims to be fully feature compatible with ink and [inkjs](github.com/y-lohse/inkjs) while instead maintaining a
+more Pythonic API.
 
 
 ## Getting Started
 
 ```python
 
-import inkpy
+from inkpy.runtime import Story
 
 
-# use a path
-story = inkpy.Story("story.json")
-
-
-# ... or a file-like object
-with open("story.json", "f") as f:
-    story = inkpy.Story(f)
-
-
-# ... or you can also pass a string
-
-content = """
-- I looked at Monsieur Fogg 
-*   ... and I could contain myself no longer.
-    'What is the purpose of our journey, Monsieur?'
-    'A wager,' he replied.
-    * *     'A wager!'[] I returned.
-            He nodded. 
-            * * *   'But surely that is foolishness!'
-            * * *  'A most serious matter then!'
-            - - -   He nodded again.
-            * * *   'But can we win?'
-                    'That is what we will endeavour to find out,' he answered.
-            * * *   'A modest wager, I trust?'
-                    'Twenty thousand pounds,' he replied, quite flatly.
-            * * *   I asked nothing further of him then[.], and after a final, polite cough, he offered nothing more to me. <>
-    * *     'Ah[.'],' I replied, uncertain what I thought.
-    - -     After that, <>
-*   ... but I said nothing[] and <> 
-- we passed the day in silence.
-- -> END
-"""
-
-story = inkpy.Story.from_string(content)
+story = Story(data)
+story.continue_()
 
 ```
 
 
-## Differences with the C# API
+## Differences with C# API
 
-There are a number of API differences between ink C# and inkpy:
+- Methods and attributes have been converted from CamelCase to snake_case.
 
+- Like the JS port, methods that pass a reference to a variable will typically return tuples instead.
 
+- The entire API has not been replicated, typically your most common public methods and attributes on the ``Story``
+  class have been retained but others may have been renamed, refactored, merged or removed.
 
-### Variable observers
+- Errors and warnings have separate ``on_error`` and ``on_warning`` handlers respectively.
 
-A method or decorator can be used to register a function:
+- The random implementation may not produce the same results even if seeded the same, but neither does inkjs until
+  [ink #188](https://github.com/inkle/ink/issues/188) and [inkjs #31](https://github.com/y-lohse/inkjs/issues/31) are
+  resolved. Once that has been done it will be worthwhile implementing the same PRNG here to have consistent results
+  across the board.
 
-```python
-
-def set_health_in_ui(name, value):
-    pass
-
-story.observe_variable("health", set_health_in_ui)
-
-
-# ... or with a decorator
-
-@story.observe_variable("health")
-def set_health_in_ui(name, value):
-    pass
-
-```
-
-
-### Out from ``EvaluationFunction``
-
-The result and text output are returned as a tuple, instead of the text output being passed as an
-argument:
-
-```python
-
-result, output = story.evaluation_function("my_ink_function", ["arg1", "arg2"])
-
-```
-
-### Binding external functions
-
-A method or decorator can be used to bind a function:
-
-
-```python
-
-def play_sound(name):
-    pass
-
-story.bind_external_function("playSound", play_sound)
-
-
-# ... or with a decorator
-
-@story.bind_external_function("playSound")
-def play_sound(name):
-    pass
-
-```
-
-``lookahreadSafe`` becomes the ``lookahead_safe`` keyword-argument to the method.
-
-
-## Compiler
-
-You can use the command-line compiler:
-
-```shell
-
-$ python -m inkpy.compiler -h
-
-```
-
-Or compile from within the API:
-
-```python
-
-# you can compile an `<inkpy.Story>` object
-story.compile()
-
-# or pass a `<inkpy.Story>` to the `compile` function
-inkpy.compile(story)
-
-# ... or you can pass a string containing raw `ink`
-inkpy.compile(content)
-
-```
-
-
-## Compatibility
-
-| _inklecate_ version | _inkpy_ version | _json_ version |
-| :-----------------: | :-------------: | :------------: |
-|    1.0.0 - 1.1.1    |      0.1.0      |     20 - 21    |
+  A hook ``random_generator`` is provided in case you need to implement an ink or inkjs adjacent random generator.

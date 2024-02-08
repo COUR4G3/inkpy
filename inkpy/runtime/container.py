@@ -1,27 +1,21 @@
+import reprlib
 import typing as t
 
 from enum import IntEnum
 
-from .named_content import NamedContent
 from .object import InkObject
 from .path import Path
-from .value import StringValue
-
-if t.TYPE_CHECKING:
-    from .search_result import SearchResult
 
 
-class Container(NamedContent):
+class Container(InkObject):
     class CountFlags(IntEnum):
         Visits = 1
         Turns = 2
         CountStartOnly = 4
 
     def __init__(self, name: t.Optional[str] = None, **kwargs):
-        self.name = name
-
-        self._content: list[InkObject] = []
-        self.named_content: dict[str, NamedContent] = {}
+        self.content: list[InkObject] = []
+        self.named_content: dict[str, InkObject] = {}
 
         self.visits_should_be_counted: bool = False
         self.turn_index_should_be_counted: bool = False
@@ -29,130 +23,85 @@ class Container(NamedContent):
 
         self._path_to_first_leaf_content: t.Optional[Path] = None
 
-        super().__init__(**kwargs)
+        super().__init__(name, **kwargs)
 
-    def add_content(self, content: t.Union["InkObject", list["InkObject"]]):
-        if isinstance(content, list):
-            for item in content:
-                self.add_content(item)
+    def __contains__(self, other):
+        return other in self.content or other in self.named_content.values()
+
+    def __getitem__(self, key: int | str) -> InkObject:
+        if isinstance(key, int):
+            return self.content[key]
         else:
-            self.content.append(content)
+            return self.named_content[key]
 
-            # TODO: remove this when done testing
-            if content is None:
-                return
+    def __iter__(self):
+        return iter(self.content)
 
-            if content.parent:
-                raise RuntimeError(
-                    f"Content '{content}' is already in '{content.parent}'"
-                )
+    @reprlib.recursive_repr
+    def __repr__(self):
+        return (
+            f"Container[{self.name and f' ({self.name}) ' or ''}, {self.content!r}, "
+            f"{self.named_only_content!r}]"
+        )
 
-            content.parent = self
+    def __setitem__(self, key: str, content: InkObject):
+        self.named_content[key] = content
 
-            self.try_add_named_content(content)
-
-    def add_to_named_content_only(self, content: NamedContent):
+    def add_content(self, content: InkObject, name: t.Optional[str] = None):
         content.parent = self
 
-        self.named_content[content.name] = content
+        self.content.append(content)
 
-    def build_string_of_heirachy(
-        self, current_object: InkObject | None = None, indent: int = 0
+        if not name:
+            name = content.name
+
+        if name:
+            self.add_named_content(content, name)
+
+    def add_named_content(self, content: InkObject, name: t.Optional[str] = None):
+        if not name:
+            name = content.name
+
+        if not name:
+            raise TypeError("Cannot add name content without name")
+
+        self.named_content[name] = content
+
+    def dump_string_hierachy(
+        self, current_content: t.Optional[InkObject] = None, indent: int = 0
     ) -> str:
-        text = f"{indent*' '}["
+        line = f"{' ' * indent}["
 
         if self.has_valid_name:
-            text += f" ({self.name})"
+            line += f" ({self.name})"
 
-        if self is current_object:
-            text += " <---"
+        if self is current_content:
+            line += " <---"
 
-        text += "\n"
-
-        indent += 2
-
-        text += f"{indent*' '}[\n"
+        lines = [line]
 
         indent += 2
 
         for content in self.content:
             if isinstance(content, Container):
-                text += content.build_string_of_heirachy(current_object, indent) + "\n"
-            elif isinstance(content, StringValue):
-                text += f'{indent*" "}"' + content.value.replace("\n", "\\n") + '",\n'
+                lines.append(content.dump_string_hierachy(current_content, indent))
             else:
-                text += f"{indent*' '}{content!r},\n"
+                lines.append(f"{' ' * indent}{content!r}")
+
+        if len(self.named_content) > 0:
+            lines.append("-- named: --")
+
+            for content in self.named_content.values():
+                content = t.cast(Container, content)
+                lines.append(content.dump_string_hierachy(current_content, indent))
 
         indent -= 2
+        lines.append(f"{' ' * indent}]")
 
-        text += f"{indent*' '}],\n"
-
-        named_only_content = self.named_only_content
-        if named_only_content:
-            text += f"{indent*' '}-- named: --\n"
-
-            for content in named_only_content.values():
-                text += content.build_string_of_heirachy(current_object, indent) + "\n"
-
-        indent -= 2
-
-        text += f"{indent*' '}]{indent and ',' or ''}"
-
-        return text
+        return "\n".join(lines)
 
     @property
-    def content(self) -> list[InkObject]:
-        return self._content
-
-    @content.setter
-    def content(self, content: t.Union["InkObject", list["InkObject"]]):
-        self.add_content(content)
-
-    def content_at_path(
-        self, path: Path, start: int = 0, length: int = -1
-    ) -> "SearchResult":
-        if length == -1:
-            length = len(path)
-
-        from .search_result import SearchResult
-
-        result = SearchResult(approximate=False)
-
-        container = self
-        current_object = self
-
-        for component in path.components[start:length]:
-            if not isinstance(container, Container):
-                result.approximate = True
-                print("got no container approximate for", path)
-                break
-
-            object = container.content_with_path_component(component)
-
-            if object is None:
-                result.approximate = True
-                print("got no object approximate for", path)
-                break
-
-            current_object = object
-            container = object
-
-        result.obj = current_object
-
-        return result
-
-    def content_with_path_component(self, component: Path.Component) -> InkObject:
-        if component.is_index:
-            if component.index >= 0 and component.index < len(self.content):
-                return self.content[component.index]
-        elif component.is_parent:
-            return self.parent
-        else:
-            content = self.named_content.get(component.name)
-            return content
-
-    @property
-    def count_flags(self) -> "Container.CountFlags":
+    def flags(self) -> "Container.CountFlags":
         flags = 0
 
         if self.visits_should_be_counted:
@@ -167,56 +116,49 @@ class Container(NamedContent):
 
         return flags
 
-    @count_flags.setter
-    def count_flags(self, value: "Container.CountFlags"):
+    @flags.setter
+    def flags(self, value: "Container.CountFlags"):
         if value & Container.CountFlags.Visits > 0:
             self.visits_should_be_counted = True
         if value & Container.CountFlags.Turns > 0:
-            self.visits_should_be_counted = True
+            self.turn_index_should_be_counted = True
         if value & Container.CountFlags.CountStartOnly > 0:
             self.count_at_start_only = True
 
-    def internal_path_to_first_leaf_content(self) -> Path:
-        components = []
-
-        container = self
-        while isinstance(container, Container):
-            if len(container.content) > 0:
-                components.append(Path.Component(0))
-                container = container.content[0]
-
-        return Path(components)
-
     @property
-    def named_only_content(self) -> dict[str, NamedContent]:
-        named_only_content = self.named_content.copy()
-
-        for c in self.content:
-            if isinstance(c, NamedContent) and c.has_valid_name:
-                named_only_content.pop(c.name, None)
-
-        return named_only_content
-
-    @named_only_content.setter
-    def named_only_content(self, value: t.Optional[dict[str, NamedContent]] = None):
-        for key in self.named_only_content:
-            self.named_content.pop(key)
-
-        if value is None:
-            return
-
-        for value in value.values():
-            if isinstance(value, NamedContent):
-                self.add_to_named_content_only(value)
+    def named_only_content(self) -> dict[str, InkObject]:
+        return {k: v for k, v in self.named_content.items() if v not in self.content}
 
     @property
     def path_to_first_leaf_content(self) -> Path:
         if not self._path_to_first_leaf_content:
-            self._path_to_first_leaf_content = self.path.path_by_appending_path(
-                self.internal_path_to_first_leaf_content
-            )
+            components = []
+
+            container = self
+            while isinstance(container, Container):
+                if len(container.content) > 0:
+                    components.append(Path.Component(0))
+                    container = container.content[0]
+
+            relative_path = Path(components, is_relative=True)
+
+            # TODO: convert path to absolute
+            path = relative_path
+
+            self._path_to_first_leaf_content = path
+
         return self._path_to_first_leaf_content
 
-    def try_add_named_content(self, content: InkObject):
-        if isinstance(content, NamedContent) and content.has_valid_name:
-            self.add_to_named_content_only(content)
+    def walk(self, depth_first: bool = True) -> t.Generator[None, None, InkObject]:
+        """Walk through all content recursively depth-first (or breadth-first)."""
+        for content in self.content:
+            if depth_first:
+                if isinstance(content, Container):
+                    yield from content.walk()
+            else:
+                yield content
+
+        if not depth_first:
+            for content in self.content:
+                if isinstance(content, Container):
+                    yield from content.walk(depth_first=False)

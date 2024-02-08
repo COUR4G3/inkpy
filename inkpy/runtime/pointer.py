@@ -1,11 +1,9 @@
 import typing as t
 
 
-from .path import Path
-
-
 if t.TYPE_CHECKING:
     from .container import Container
+    from .object import InkObject
 
 
 class Pointer:
@@ -16,36 +14,27 @@ class Pointer:
     def __bool__(self):
         return self.container is not None
 
+    def __eq__(self, other):
+        if isinstance(other, Pointer):
+            return self.container == other.container and self.index == other.index
+
+        return False
+
     def __repr__(self):
-        return f"Ink Pointer -> {self.container.path} -- index {self.index}"
+        container = self.container and str(self.container.path) or None
 
-    def copy(self) -> "Pointer":
-        return Pointer(self.container, self.index)
+        return f"Pointer({container}, {self.index})"
 
-    @property
-    def path(self) -> Path:
+    def resolve(self) -> "InkObject":
         if self.container is None:
             return
-
-        if self.index >= 0:
-            return self.container.path.path_by_appending_path(
-                Path.Component(self.index)
-            )
-        else:
-            return self.container.path
-
-    def resolve(self):
-        if self.index < 0:
+        elif self.index < 0:
             return self.container
-        if self.container is None:
-            return
-        if len(self.container.content) == 0:
-            return self.container
-        if self.index >= len(self.container.content):
+        elif self.index > len(self.container.content):
             return
 
         return self.container.content[self.index]
 
     @staticmethod
-    def start_of(container: t.Optional["Container"] = None) -> "Pointer":
+    def start_of(container: "Container") -> "Pointer":
         return Pointer(container, 0)
