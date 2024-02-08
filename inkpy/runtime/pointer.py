@@ -25,6 +25,9 @@ class Pointer:
 
         return f"Pointer({container}, {self.index})"
 
+    def copy(self) -> "Pointer":
+        return Pointer(self.container, self.index)
+
     def resolve(self) -> "InkObject":
         if self.container is None:
             return

@@ -49,12 +49,15 @@ Tag:            {"#": "the tag text"}
 
 """
 
+from __future__ import annotations
+
 import json
 import logging
 import typing as t
-import warnings
 
+from .call_stack import PushPopType
 from .container import Container
+from .divert import Divert
 from .object import InkObject
 from .value import BoolValue, FloatValue, IntValue, StringValue, Value
 from .void import Void
@@ -80,9 +83,9 @@ def _dump(story: "Story", output: t.TextIO | None = None) -> str | None:
     }
 
     if output:
-        json.dump(data, output)
+        json.dump(data, output, separators=(",", ":"))
     else:
-        return json.dumps(data)
+        return json.dumps(data, separators=(",", ":"))
 
 
 def dump(story: "Story", output: t.TextIO):
@@ -163,13 +166,12 @@ def load(data: dict | str | t.TextIO):
             "version of the loader"
         )
     elif version != INK_VERSION_CURRENT:
-        warnings.warn(
+        logger.warning(
             "Version of ink used to build story doesn't match current version of "
             "loader. Non-critical, but recommend synchronising.",
-            RuntimeWarning,
         )
-    else:
-        logger.debug("Version %s", version)
+
+    logger.debug("Loading ink runtime with version %s", version)
 
     if "root" not in data:
         raise ValueError("Root node for ink not found")
@@ -224,7 +226,49 @@ def load_runtime_object(obj) -> InkObject:
             return Void()
 
     elif isinstance(obj, dict):
-        pass
+        # TODO: divert target value
+
+        # TODO: variable pointer
+
+        # divert
+        is_divert = False
+        pushes_to_stack = False
+        stack_push_type = PushPopType.Function
+        is_external = False
+
+        if value := obj.get("->"):
+            is_divert = True
+        if value := obj.get("f()"):
+            is_divert = True
+            pushes_to_stack = True
+        if value := obj.get("->t->"):
+            is_divert = True
+            pushes_to_stack = True
+            stack_push_type = PushPopType.Tunnel
+        if value := obj.get("x()"):
+            is_divert = True
+            is_external = True
+
+        if is_divert:
+            divert = Divert()
+            divert.pushes_to_stack = pushes_to_stack
+            divert.stack_push_type = stack_push_type
+            divert.is_external = is_external
+
+            target = str(value)
+
+            if value := obj.get("var"):
+                divert.variable_divert_name = target
+            else:
+                divert.target_path_string = target
+
+            divert.is_conditional = obj.get("c", False)
+
+            if is_external:
+                if value := obj.get("exArgs"):
+                    divert.external_args = int(value)
+
+            return divert
 
     if obj is None:
         return

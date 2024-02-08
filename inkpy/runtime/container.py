@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import reprlib
 import typing as t
 
@@ -37,10 +39,10 @@ class Container(InkObject):
     def __iter__(self):
         return iter(self.content)
 
-    @reprlib.recursive_repr
+    @reprlib.recursive_repr()
     def __repr__(self):
         return (
-            f"Container[{self.name and f' ({self.name}) ' or ''}, {self.content!r}, "
+            f"Container[{self.name and f'({self.name}),' or ''}{self.content!r}, "
             f"{self.named_only_content!r}]"
         )
 

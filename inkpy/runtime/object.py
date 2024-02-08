@@ -15,6 +15,9 @@ class InkObject:
 
         self._path: t.Optional[Path] = None
 
+    def compact_path_string(self, path: str) -> str:
+        return path
+
     @property
     def has_valid_name(self):
         return bool(self.name)

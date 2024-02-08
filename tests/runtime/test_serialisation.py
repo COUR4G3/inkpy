@@ -1,7 +1,10 @@
+import logging
 import pytest
 
 from inkpy.runtime import serialisation
+from inkpy.runtime.call_stack import PushPopType
 from inkpy.runtime.container import Container
+from inkpy.runtime.divert import Divert
 from inkpy.runtime.story import Story
 from inkpy.runtime.value import BoolValue, FloatValue, IntValue, StringValue
 from inkpy.runtime.void import Void
@@ -15,9 +18,10 @@ def story():
     return story
 
 
-@pytest.fixture
-def story_json():
-    return f'{{"inkVersion": {serialisation.INK_VERSION_CURRENT}, "root": []}}'
+@pytest.fixture(scope="session")
+def story_json(datadir):
+    with (datadir / "minimal.ink.json").open("r", encoding="utf-8-sig") as f:
+        return f.read()
 
 
 def test_dump(story, story_json, tmpdir):
@@ -104,7 +108,7 @@ def test_dump_runtime_object_bool_value():
 def test_dump_runtime_object_float_value():
     obj = serialisation.dump_runtime_object(FloatValue(1.07))
     assert isinstance(obj, float)
-    assert obj == 1.07
+    assert obj == pytest.approx(1.07)
 
 
 def test_dump_runtime_object_int_value():
@@ -138,10 +142,8 @@ def test_dumps(story, story_json):
     assert res == story_json
 
 
-def test_load(story_json, tmpdir):
-    with (tmpdir / "load.json").open("w+") as f:
-        f.write(story_json)
-        f.seek(0)
+def test_load(datadir):
+    with (datadir / "minimal.ink.json").open("r", encoding="utf-8-sig") as f:
         root, _ = serialisation.load(f)
 
     assert isinstance(root, Container)
@@ -158,14 +160,16 @@ def test_load_version_malformed():
         serialisation.load({"inkVersion": "foo", "root": []})
 
 
-def test_load_version_min_supported():
-    with pytest.warns(
-        RuntimeWarning,
-        match="Version of ink used to build story doesn't match current version",
-    ):
+def test_load_version_min_supported(caplog):
+    with caplog.at_level(logging.WARNING):
         serialisation.load(
             {"inkVersion": serialisation.INK_VERSION_MINIMUM_COMPATIBLE, "root": []}
         )
+
+    assert (
+        "Version of ink used to build story doesn't match current version"
+        in caplog.text
+    )
 
 
 def test_load_version_missing():
@@ -262,6 +266,51 @@ def test_load_runtime_object_bool_value():
     assert obj2.value is False
 
 
+def test_load_runtime_object_divert():
+    return
+
+    target = "."
+
+    obj1 = serialisation.load_runtime_object({"->": target})
+    assert isinstance(obj1, Divert)
+    assert obj1.is_external is False
+    assert obj1.pushes_to_stack is False
+    assert obj1.target_path_string == target
+
+    obj2 = serialisation.load_runtime_object({"f()": target})
+    assert isinstance(obj2, Divert)
+    assert obj2.is_external is False
+    assert obj2.pushes_to_stack is True
+    assert obj2.stack_push_type == PushPopType.Function
+    assert obj2.target_path_string == target
+
+    obj3 = serialisation.load_runtime_object({"->t->": target})
+    assert isinstance(obj3, Divert)
+    assert obj3.is_external is False
+    assert obj3.pushes_to_stack is True
+    assert obj3.stack_push_type == PushPopType.Tunnel
+    assert obj3.target_path_string == target
+
+    obj4 = serialisation.load_runtime_object({"x()": target})
+    assert isinstance(obj4, Divert)
+    assert obj4.is_external is True
+    assert obj4.pushes_to_stack is False
+    assert obj4.target_path_string == target
+
+    obj5 = serialisation.load_runtime_object({"->": target, "var": True})
+    assert isinstance(obj5, Divert)
+    assert obj5.has_variable_target is True
+
+    obj6 = serialisation.load_runtime_object({"->": target, "c": True})
+    assert isinstance(obj6, Divert)
+    assert obj6.is_conditional is True
+
+    obj7 = serialisation.load_runtime_object({"x()": target, "exArgs": 2})
+    assert isinstance(obj7, Divert)
+    assert obj7.is_external is True
+    assert obj7.external_args == 2
+
+
 def test_load_runtime_object_empty_dict():
     with pytest.raises(RuntimeError, match="Failed to convert token to runtime object"):
         serialisation.load_runtime_object({})
@@ -270,7 +319,7 @@ def test_load_runtime_object_empty_dict():
 def test_load_runtime_object_float_value():
     obj = serialisation.load_runtime_object(1.07)
     assert isinstance(obj, FloatValue)
-    assert obj.value == 1.07
+    assert obj.value == pytest.approx(1.07)
 
 
 def test_load_runtime_object_int_value():

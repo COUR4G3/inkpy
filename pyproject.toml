@@ -1,7 +1,7 @@
 [project]
 name = "inkpy"
-description = """This is a Python port of inkle's [ink](https://github.com/inkle/ink), a scripting language for \
-writing interactive narrative.
+description = """This is a Python port of inkle's [ink](https://github.com/inkle/ink), a scripting language for writing
+interactive narrative for use with game and web frameworks.
 """
 
 readme = "README.md"
@@ -22,12 +22,7 @@ dynamic = ["version"]
 requires-python = ">= 3.9"
 dependencies = []
 
-[project.scripts]
-inkpy = "inkpy.cli:main"
-"inklecate.py" = "inkpy.compiler.cli:main"
-
 [project.urls]
-Demo = "https://inkpy.github.io/"
 Homepage = "https://github.com/COUR4G3/inkpy/"
 Documentation = "https://inkpy.readthedocs.io/"
 Changes = "https://inkpy.readthedocs.io/en/latest/changelog.html"
@@ -100,7 +95,7 @@ line_length = 88
 lines_between_types = 1
 multi_line_output = 3
 combine_as_imports = true
-known_first_party = ['druglord3k', 'tests']
+known_first_party = ['inkpy', 'tests']
 
 [tool.mypy]
 python_version = '3.9'
@@ -112,11 +107,12 @@ module = [
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
-addopts = "--cov=inkpy/ --cov-report=term-missing:skip-covered --import-mode=importlib"
+addopts = "--cov=inkpy/ --cov-report=term-missing:skip-covered"
 markers = [
     "slow: tests that are slow",
     "integration: integration tests that require external tools",
 ]
+timeout = 1
 
 [tool.setuptools.packages.find]
 include = ["inkpy*"]

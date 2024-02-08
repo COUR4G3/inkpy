@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import logging
 import typing as t
 
@@ -147,9 +149,11 @@ class State:
 
     def reset_errors(self):
         self.current_errors.clear()
-        self.current_warnings.clear()
 
     def reset_output(self, content: list[InkObject]):
         self.output_stream.clear()
         if content:
             self.output_stream.extend(content)
+
+    def reset_warnings(self):
+        self.current_warnings.clear()

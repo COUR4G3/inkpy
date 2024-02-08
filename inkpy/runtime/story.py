@@ -1,3 +1,6 @@
+from __future__ import annotations
+
+import asyncio
 import logging
 import typing as t
 
@@ -18,11 +21,13 @@ logger = logging.getLogger("inkpy")
 
 class Story:
     def __init__(self, data: str | t.TextIO | None = None):
-        self.allow_external_function_fallbacks = True
+        self.allow_external_function_fallbacks = False
 
         self._evaluation_content_container: Container | None = None
         self._externals: dict[str, ExternalFunction] = {}
+        self._has_validated_externals = False
         self._observers: dict[str, list[typing.Observer]] = defaultdict(list)
+        self._on_choose_path_string: typing.ChoosePathStringHandler | None = None
         self._on_error: typing.ErrorHandler | None = None
         self._on_warning: typing.WarningHandler | None = None
 
@@ -56,16 +61,111 @@ class Story:
     def can_continue(self) -> bool:
         return self.state.can_continue
 
-    def choose_path(self, path: Path):
-        return
+    def choose_path(self, path: Path, incrementing_turn_index: bool = True):
+        self.state.set_chosen_path(path, incrementing_turn_index)
 
-    def choose_path_string(self, path: str):
-        return
+        # take note of newly visited container for read counts, turns etc.
+        self.visit_changed_container_due_to_divert()
+
+    def choose_path_string(
+        self, path: str, reset_callstack: bool = True, args: list | None = None
+    ):
+        """Change the current position of the story to the given path."""
+        if args is None:
+            args = []
+
+        if self._on_choose_path_string:
+            self._on_choose_path_string(path, args)
+
+        if reset_callstack:
+            self.reset_callstack()
+        else:
+            current_element = self.state.call_stack.current_element
+            if current_element.type == PushPopType.Function:
+                container = current_element.current_pointer.container
+                trace = self.state.call_stack.call_stack_trace
+
+                raise RuntimeError(
+                    f"Story was running a function ({container.path}) when you called "
+                    f"choose_path_string({path}) - this is almost certainly not what "
+                    f"you want! Full stack trace: \n{trace}"
+                )
+
+        self.state.pass_arguments_to_evaulation_stack(args)
+        self.choose_path(Path(path))
 
     def continue_(self):
-        return
+        """Continue story execution and return the next line of text."""
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(self.continue_async())
+        else:
+            return loop.run_until_complete(self.continue_async())
+
+    async def continue_async(self):
+        """Continue story execution asynchronously and return the next line of text."""
+
+        if not self._has_validated_externals:
+            self.validate_external_bindings()
+
+        if not self.can_continue:
+            raise RuntimeError(
+                "Cannot continue - check can_continue beforing continuing"
+            )
+
+        self.state.variables_state.batch_observing_variable_changes = True
+
+        while self.can_continue:
+            try:
+                output_stream_ends_in_newline = self._continue_single_step()
+            except StoryException as e:
+                self._add_error(e)
+                break
+
+            if output_stream_ends_in_newline:
+                break
+
+            await asyncio.sleep(0)
+
+        if self._state_snapshot_at_last_newline:
+            self.restore_state_snapshot()
+
+        if not self.can_continue:
+            pass
+
+        self.state.did_safe_exit = False
+        self._saw_lookahead_unsafe_function_after_newline = False
+
+        if self._on_did_continue:
+            self._on_did_continue()
+
+        self.state.variables_state.batch_observing_variable_changes = False
+
+        if self.state.has_error or self.state.has_warning:
+            if self._on_error:
+                for error in self.state.current_errors:
+                    self._on_error(error)
+
+                self.reset_errors()
+            else:
+                raise StoryException(
+                    f"Ink had {len(self.state.current_errors)} error(s) and "
+                    f"{len(self.state.current_warnings)} warning(s). The first error "
+                    f"was: {self.state.current_errors[0]}"
+                )
+
+            if self._on_warning:
+                for warning in self.state.current_warnings:
+                    self._on_warning(warning)
+
+                self.reset_warnings()
+
+        return self.current_text
 
     def continue_maximally(self) -> t.Generator[None, None, str]:
+        """Continue story execution until user interaction required or it ends."""
         while self.can_continue:
             yield self.continue_()
 
@@ -179,7 +279,7 @@ class Story:
         self.state.force_end()
 
     def reset_errors(self):
-        """Reset all errors and warnings from execution."""
+        """Reset all errors from execution."""
         self.state.reset_errors()
 
     def reset_globals(self):
@@ -193,13 +293,17 @@ class Story:
 
             self.state.current_pointer = original_pointer
 
-        self.state.variables_state.snapshot_default_globals()
+        # self.state.variables_state.snapshot_default_globals()
 
     def reset_state(self):
         """Reset story back to its initial state."""
 
         self.state = State(self)
         self.reset_globals()
+
+    def reset_warnings(self):
+        """Reset all warnings from execution."""
+        self.state.reset_warnings()
 
     def unbind_external_function(self, name: str):
         """Unbind a previously bound external function."""
@@ -209,8 +313,8 @@ class Story:
         self, obj: Container | InkObject | None = None, missing: set | None = None
     ):
         """Validate all external functions are bound (or there are fallbacks)."""
-        if missing_externals is None:
-            missing_externals = set()
+        if missing is None:
+            missing = set()
 
         if isinstance(obj, Container):
             for content in obj.content:
@@ -228,10 +332,12 @@ class Story:
                     else:
                         missing.add(name)
 
-        else:
+        elif missing:
             raise ExternalBindingsValidationError(
                 missing, self.allow_external_function_fallbacks
             )
+
+        self._has_validated_externals = True
 
 
 class ExternalFunction:

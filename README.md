@@ -20,6 +20,21 @@ story.continue_()
 ```
 
 
+## Encoding
+
+You should read any ``.ink`` and ``.ink.json`` files using ``utf-8-sig`` encoding or you may receive a
+``UnicodeDecodeError`` because of the byte-order mark (BOM) that is typically added by some tools. An example below:
+
+```python
+
+with open("story.ink.json", "r", encoding="utf-8-sig") as f:
+    ...
+
+```
+
+When writing files you can use ``utf-8`` encoding which is typically the Python default.
+
+
 ## Differences with C# API
 
 - Methods and attributes have been converted from CamelCase to snake_case.
