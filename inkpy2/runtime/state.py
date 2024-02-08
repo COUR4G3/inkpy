@@ -29,6 +29,11 @@ class State:
         self.diverted_pointer: Pointer | None = None
         self.evaluation_stack: list[InkObject] = []
 
+        self._current_tags: list[str] = []
+        self._current_text: str = ""
+        self._output_stream_tags_dirty = False
+        self._output_stream_text_dirty = False
+
     def add_error(self, message):
         self.current_errors.append(message)
         logger.error(message)
@@ -49,6 +54,24 @@ class State:
     def can_continue(self) -> bool:
         return self.current_pointer and not self.has_error
 
+    def copy(self) -> "State":
+        state = State(self.story)
+
+        state.current_flow = Flow(self.current_flow.name, self.story)
+        state.diverted_pointer = self.diverted_pointer
+
+        self.current_errors.extend(self.current_errors)
+
+        self.current_warnings.extend(self.current_warnings)
+
+        state.output_stream.extend(self.output_stream)
+        state._current_tags.extend(self._current_tags)
+        state._current_text = self._current_text
+        state._output_stream_tags_dirty = self._output_stream_tags_dirty
+        state._output_stream_text_dirty = self._output_stream_text_dirty
+
+        return state
+
     @property
     def current_choices(self) -> list[Choice]:
         if self.can_continue:
@@ -65,17 +88,23 @@ class State:
 
     @current_pointer.setter
     def current_pointer(self, value: Pointer | None):
-        current_pointer = self.call_stack.current_element.current_pointer
-        self.call_stack.current_thread.previous_pointer = current_pointer
+        previous_pointer = self.call_stack.current_element.current_pointer
+        self.call_stack.current_thread.previous_pointer = previous_pointer
         self.call_stack.current_element.current_pointer = value
 
     @property
     def current_tags(self) -> list[str]:
-        return
+        if self._output_stream_tags_dirty:
+            self._output_stream_tags_dirty = False
+
+        return self._current_tags
 
     @property
     def current_text(self) -> str:
-        return
+        if self._output_stream_text_dirty:
+            self._output_stream_text_dirty = False
+
+        return self._current_text
 
     def force_end(self):
         self.current_pointer = None
@@ -100,6 +129,10 @@ class State:
 
     has_warnings = has_warning
 
+    def mark_output_stream_dirty(self):
+        self._output_stream_tags_dirty = True
+        self._output_stream_text_dirty = True
+
     @property
     def output_stream(self) -> list[InkObject]:
         return self.current_flow.output_stream
@@ -109,9 +142,14 @@ class State:
         return self.call_stack.current_thread.previous_pointer
 
     @previous_pointer.setter
-    def current_pointer(self, value: Pointer | None):
+    def previous_pointer(self, value: Pointer | None):
         self.call_stack.current_thread.previous_pointer = value
 
     def reset_errors(self):
         self.current_errors.clear()
         self.current_warnings.clear()
+
+    def reset_output(self, content: list[InkObject]):
+        self.output_stream.clear()
+        if content:
+            self.output_stream.extend(content)
