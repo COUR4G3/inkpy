@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 import typing as t
 
@@ -13,7 +12,9 @@ from .divert import Divert
 from .exceptions import ExternalBindingsValidationError, StoryException
 from .object import InkObject
 from .path import Path
+from .pointer import Pointer
 from .state import State
+from .variables_state import VariablesState
 
 
 logger = logging.getLogger("inkpy")
@@ -99,26 +100,16 @@ class Story:
     def continue_(self):
         """Continue story execution and return the next line of text."""
 
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            return asyncio.run(self.continue_async())
-        else:
-            return loop.run_until_complete(self.continue_async())
-
-    async def continue_async(self):
-        """Continue story execution asynchronously and return the next line of text."""
-
         # check if external functions are bound
         if not self._has_validated_externals:
             self.validate_external_bindings()
 
         if not self.can_continue:
             raise RuntimeError(
-                "Cannot continue - check can_continue beforing continuing"
+                "Cannot continue - check can_continue beforing calling continue_"
             )
 
-        # self.state.variables_state.batch_observing_variable_changes = True
+        self.state.variables_state.batch_observing_variable_changes = True
 
         while self.can_continue:
             try:
@@ -129,8 +120,6 @@ class Story:
 
             if output_stream_ends_in_newline:
                 break
-
-            await asyncio.sleep(0)
 
         if self._state_snapshot_at_last_newline:
             self.restore_state_snapshot()
@@ -144,7 +133,7 @@ class Story:
         if self._on_did_continue:
             self._on_did_continue()
 
-        # self.state.variables_state.batch_observing_variable_changes = False
+        self.state.variables_state.batch_observing_variable_changes = False
 
         if self.state.has_error or self.state.has_warning:
             if self._on_error:
@@ -175,12 +164,25 @@ class Story:
     def _continue_single_step(self):
         self._step()
 
-    def _increment_content_pointer(self):
+    def _next_content(self):
+        # divert, if applicable
+        if self.state.diverted_pointer:
+            self.state.current_pointer = self.state.diverted_pointer
+            self.state.diverted_pointer = None
+
+            self.visit_changed_container_due_to_divert()
+
+            # has valid content?
+            if self.state.current_pointer:
+                return
+
+        # increment the pointer
         successful_increment = True
 
         pointer = self.state.current_pointer.copy()
         pointer.index += 1
 
+        # check if past end of content, then return to the ancestor container
         while pointer.index >= len(pointer.container.content):
             successful_increment = False
 
@@ -200,24 +202,7 @@ class Story:
 
         if not successful_increment:
             pointer = None
-
         self.state.current_pointer = pointer
-
-        return successful_increment
-
-    def _next_content(self):
-        self.state.previous_pointer = self.state.current_pointer
-
-        if self.state.diverted_pointer:
-            self.state.current_pointer = self.state.diverted_pointer
-            self.state.diverted_pointer = None
-
-            self.visit_changed_container_due_to_divert()
-
-            if self.state.current_pointer:
-                return
-
-        successful_increment = self._increment_content_pointer()
 
         if not successful_increment:
             return  # TODO: stuff
@@ -229,6 +214,9 @@ class Story:
         if not pointer:
             return
 
+        # TODO: stuff
+
+        # step to next content, and follow diverts if applicable
         self._next_content()
 
     @property
@@ -303,6 +291,12 @@ class Story:
         """Observe a variable for changes."""
 
         def decorator(f):
+            if name not in self.state.variables_state:
+                raise RuntimeError(
+                    f"Cannot observe variable '{name}' as it was never delared in "
+                    "the story"
+                )
+
             self._observers[name].append(f)
             return f
 
@@ -355,7 +349,7 @@ class Story:
 
             self.state.current_pointer = original_pointer
 
-        # self.state.variables_state.snapshot_default_globals()
+        self.state.variables_state.snapshot_defaults()
 
     def reset_state(self):
         """Reset story back to its initial state."""
@@ -400,6 +394,10 @@ class Story:
             )
 
         self._has_validated_externals = True
+
+    @property
+    def variables_state(self) -> VariablesState:
+        return self.state.variables_state
 
 
 class ExternalFunction:

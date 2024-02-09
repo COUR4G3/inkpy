@@ -8,6 +8,7 @@ from .choice import Choice
 from .flow import Flow
 from .object import InkObject
 from .pointer import Pointer
+from .variables_state import VariablesState
 
 
 if t.TYPE_CHECKING:
@@ -19,22 +20,29 @@ logger = logging.getLogger("inkpy")
 
 class State:
     DEFAULT_FLOW_NAME = "DEFAULT_FLOW"
+    INK_SAVE_STATE_VERSION = 10
+    MIN_COMPATIBLE_LOAD_VERSION = 8
 
     def __init__(self, story: "Story"):
         self.story = story
 
         self.current_errors: list[str] = []
         self.current_flow = Flow(self.DEFAULT_FLOW_NAME, story)
-        self.current_turn_index: int = 0
+        self.current_turn_index: int = -1
         self.current_warnings: list[str] = []
         self.did_safe_exit: bool = False
         self.diverted_pointer: Pointer | None = None
         self.evaluation_stack: list[InkObject] = []
+        self.variables_state = VariablesState(self.call_stack, story)
 
         self._current_tags: list[str] = []
         self._current_text: str = ""
         self._output_stream_tags_dirty = False
         self._output_stream_text_dirty = False
+        self._turn_indices: dict[str, int] = {}
+        self._visit_counts: dict[str, int] = {}
+
+        self.goto_start()
 
     def add_error(self, message):
         self.current_errors.append(message)

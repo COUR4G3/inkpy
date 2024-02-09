@@ -7,6 +7,7 @@ from .pointer import Pointer
 if t.TYPE_CHECKING:
     from .object import InkObject
     from .story import Story
+    from .value import Value
 
 
 class PushPopType(Enum):
@@ -108,9 +109,35 @@ class CallStack:
     def elements(self) -> list["CallStack.Element"]:
         return self.call_stack
 
+    def get_temporary_variable(self, name: str, index: int = -1) -> "Value":
+        if index == -1:
+            index = self.current_element_index + 1
+
+        context_element = self.call_stack[index - 1]
+
+        if name in context_element.temporary_variables:
+            return context_element.temporary_variables[name]
+
     def reset(self):
         thread = CallStack.Thread()
         thread.callstack.append(
             CallStack.Element(PushPopType.Tunnel, self.start_of_root)
         )
         self.threads: list["CallStack.Thread"] = [thread]
+
+    def set_temporary_variable(
+        self, name: str, value: "Value", declare_new: bool = False, index: int = -1
+    ):
+        if index == -1:
+            index = self.current_element_index + 1
+
+        context_element = self.call_stack[index - 1]
+
+        if not declare_new and name not in context_element.temporary_variables:
+            raise RuntimeError(f"Could not find temporary variable to set: {name}")
+
+        if old_value := context_element.temporary_variables.get(name):
+            # TODO: retain old value for list
+            pass
+
+        context_element.temporary_variables[name] = value
