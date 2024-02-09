@@ -54,7 +54,7 @@ class State:
 
     @property
     def can_continue(self) -> bool:
-        return self.current_pointer and not self.has_error
+        return bool(self.current_pointer and not self.has_error)
 
     def copy(self) -> "State":
         state = State(self.story)

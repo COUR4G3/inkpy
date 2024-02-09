@@ -27,9 +27,11 @@ class Story:
         self._externals: dict[str, ExternalFunction] = {}
         self._has_validated_externals = False
         self._observers: dict[str, list[typing.Observer]] = defaultdict(list)
+        self._on_did_continue: typing.DidContinueHandler | None = None
         self._on_choose_path_string: typing.ChoosePathStringHandler | None = None
         self._on_error: typing.ErrorHandler | None = None
         self._on_warning: typing.WarningHandler | None = None
+        self._state_snapshot_at_last_newline: State | None = None
 
         if data:
             self.load(data)
@@ -107,6 +109,7 @@ class Story:
     async def continue_async(self):
         """Continue story execution asynchronously and return the next line of text."""
 
+        # check if external functions are bound
         if not self._has_validated_externals:
             self.validate_external_bindings()
 
@@ -115,7 +118,7 @@ class Story:
                 "Cannot continue - check can_continue beforing continuing"
             )
 
-        self.state.variables_state.batch_observing_variable_changes = True
+        # self.state.variables_state.batch_observing_variable_changes = True
 
         while self.can_continue:
             try:
@@ -133,7 +136,7 @@ class Story:
             self.restore_state_snapshot()
 
         if not self.can_continue:
-            pass
+            pass  # TODO: stuff
 
         self.state.did_safe_exit = False
         self._saw_lookahead_unsafe_function_after_newline = False
@@ -141,7 +144,7 @@ class Story:
         if self._on_did_continue:
             self._on_did_continue()
 
-        self.state.variables_state.batch_observing_variable_changes = False
+        # self.state.variables_state.batch_observing_variable_changes = False
 
         if self.state.has_error or self.state.has_warning:
             if self._on_error:
@@ -168,6 +171,65 @@ class Story:
         """Continue story execution until user interaction required or it ends."""
         while self.can_continue:
             yield self.continue_()
+
+    def _continue_single_step(self):
+        self._step()
+
+    def _increment_content_pointer(self):
+        successful_increment = True
+
+        pointer = self.state.current_pointer.copy()
+        pointer.index += 1
+
+        while pointer.index >= len(pointer.container.content):
+            successful_increment = False
+
+            ancestor = pointer.container.parent
+
+            if not ancestor:
+                break
+
+            try:
+                index = ancestor.content.index(pointer.container)
+            except IndexError:
+                break
+
+            pointer = Pointer(ancestor, index + 1)
+
+            successful_increment = True
+
+        if not successful_increment:
+            pointer = None
+
+        self.state.current_pointer = pointer
+
+        return successful_increment
+
+    def _next_content(self):
+        self.state.previous_pointer = self.state.current_pointer
+
+        if self.state.diverted_pointer:
+            self.state.current_pointer = self.state.diverted_pointer
+            self.state.diverted_pointer = None
+
+            self.visit_changed_container_due_to_divert()
+
+            if self.state.current_pointer:
+                return
+
+        successful_increment = self._increment_content_pointer()
+
+        if not successful_increment:
+            return  # TODO: stuff
+
+    def _step(self):
+        should_add_to_stream = True
+
+        pointer = self.state.current_pointer
+        if not pointer:
+            return
+
+        self._next_content()
 
     @property
     def current_choices(self) -> list[Choice]:

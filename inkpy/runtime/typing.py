@@ -5,5 +5,6 @@ if t.TYPE_CHECKING:
 
 
 ChoosePathStringHandler = t.Callable[[str, "InkObject"], None]
+DidContinueHandler = t.Callable[[], None]
 ErrorHandler = WarningHandler = t.Callable[[str], None]
 Observer = t.Callable[[str, t.Any], None]
