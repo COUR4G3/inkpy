@@ -10,7 +10,7 @@ if t.TYPE_CHECKING:
 
 
 class VariablesState:
-    dont_save_default_values = True
+    DONT_SAVE_DEFAULT_VALUES = True
 
     def __init__(self, call_stack: CallStack, story: "Story"):
         self.call_stack = call_stack
@@ -25,11 +25,7 @@ class VariablesState:
         return name in self._global_variables or name in self._default_global_variables
 
     def __getitem__(self, name: str):
-        # TODO: get from patch
-
-        value = self._global_variables.get(name)
-        if value is None:
-            value = self._default_global_variables.get(name)
+        value = self.get(name)
 
         if value is None:
             # TODO: return warning

@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import json
 import logging
 import typing as t
 
+import json_stream
+
+from . import serialisation
 from .call_stack import CallStack
 from .choice import Choice
 from .flow import Flow
@@ -33,6 +37,7 @@ class State:
         self.did_safe_exit: bool = False
         self.diverted_pointer: Pointer | None = None
         self.evaluation_stack: list[InkObject] = []
+        self.named_flows: dict[str, Flow] = {}
         self.variables_state = VariablesState(self.call_stack, story)
 
         self._current_tags: list[str] = []
@@ -112,6 +117,17 @@ class State:
     @property
     def current_text(self) -> str:
         if self._output_stream_text_dirty:
+            text = []
+
+            in_tag = False
+            for content in self.output_stream:
+                # TODO: handle string value OR control command
+
+                if not in_tag and content:
+                    text.append(content.value)
+
+            # TODO: clean output whitespace
+            self._current_text = "".join(text)
             self._output_stream_text_dirty = False
 
         return self._current_text
@@ -139,6 +155,14 @@ class State:
 
     has_warnings = has_warning
 
+    @property
+    def in_expression_evaluation(self) -> bool:
+        return self.call_stack.current_element.in_expression_evaluation
+
+    @in_expression_evaluation.setter
+    def in_expression_evaluation(self, value: bool):
+        self.call_stack.current_element.in_expression_evaluation = value
+
     def mark_output_stream_dirty(self):
         self._output_stream_tags_dirty = True
         self._output_stream_text_dirty = True
@@ -154,6 +178,23 @@ class State:
     @previous_pointer.setter
     def previous_pointer(self, value: Pointer | None):
         self.call_stack.current_thread.previous_pointer = value
+
+    def push_to_output_stream(self, content: InkObject):
+        # TODO: split head and tail whitespace
+
+        self._push_to_output_stream(content)
+        self.mark_output_stream_dirty()
+
+    def _push_to_output_stream(self, content: InkObject):
+        include_in_output = True
+
+        # TODO: glue
+
+        # TODO: trim index and newlines
+
+        if include_in_output:
+            self.output_stream.append(content)
+            self.mark_output_stream_dirty()
 
     def reset_errors(self):
         self.current_errors.clear()

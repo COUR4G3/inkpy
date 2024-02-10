@@ -12,7 +12,7 @@ class Value(InkObject):
         super().__init__()
 
     def __bool__(self):
-        return self.value
+        return bool(self.value)
 
     def __lt__(self, other):
         if isinstance(other, Value):

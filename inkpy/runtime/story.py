@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import typing as t
 
@@ -21,6 +22,9 @@ logger = logging.getLogger("inkpy")
 
 
 class Story:
+    INK_VERSION_CURRENT = 21
+    INK_VERSION_MINIMUM_COMPATIBLE = 18
+
     def __init__(self, data: str | t.TextIO | None = None):
         self.allow_external_function_fallbacks = False
 
@@ -214,10 +218,53 @@ class Story:
         if not pointer:
             return
 
-        # TODO: stuff
+        container = pointer.resolve()
+        while isinstance(container, Container):
+            self.visit_container(container, at_start=True)
+
+            if len(container.content) == 0:
+                break
+
+            pointer = Pointer.start_of(container)
+            container = pointer.resolve()
+
+        self.state.current_pointer = pointer
+
+        content = pointer.resolve()
+        is_logic_or_flow_control = self._perform_login_and_flow_control(content)
+
+        # has flow been forced to end by flow control above?
+        if not pointer:
+            return
+
+        if is_logic_or_flow_control:
+            should_add_to_stream = False
+
+        # TODO: choice with condition
+
+        # if container has no content, then it is the content itself, and skip over it
+        if isinstance(content, Container):
+            should_add_to_stream = False
+
+        # content to add to evaluation stack or output stream
+        if should_add_to_stream:
+            # TODO: variable pointer
+
+            # push to expression evaluation stack
+            if self.state.in_expression_evaluation:
+                self.state.push_evaluation_stack(content)
+
+            # output stream content (when not evaluating expression)
+            else:
+                self.state.push_to_output_stream(content)
 
         # step to next content, and follow diverts if applicable
         self._next_content()
+
+        # TODO: control command
+
+    def _perform_login_and_flow_control(self, content):
+        return False
 
     @property
     def current_choices(self) -> list[Choice]:
@@ -270,8 +317,45 @@ class Story:
 
     has_warnings = has_warning
 
-    def load(self, data: dict | str | t.TextIO):
-        root, list_defs = serialisation.load(data)
+    def load(self, data: str | t.TextIO):
+        if isinstance(data, str):
+            data = json.loads(data)
+        else:
+            data = json.load(data)
+
+        try:
+            version = int(data["inkVersion"])
+        except KeyError:
+            raise ValueError("Version of ink could not be found")
+        except ValueError:
+            raise ValueError(
+                f"Version of ink value was malformed: {data['inkVersion']!r}"
+            )
+
+        if version > self.INK_VERSION_CURRENT:
+            raise RuntimeError(
+                "Version of ink used to build story was newer than the current version "
+                "of the loader"
+            )
+        elif version < self.INK_VERSION_MINIMUM_COMPATIBLE:
+            raise RuntimeError(
+                "Version of ink used to build story is too old to be loaded by this "
+                "version of the loader"
+            )
+        elif version != self.INK_VERSION_CURRENT:
+            logger.warning(
+                "Version of ink used to build story doesn't match current version of "
+                "loader. Non-critical, but recommend synchronising.",
+            )
+
+        logger.debug("Loading ink runtime with version %s", version)
+
+        if "root" not in data:
+            raise ValueError("Root node for ink not found")
+
+        root = serialisation.load_runtime_container(data["root"])
+
+        list_defs = data.get("listDefs")
 
         self.root_content_container = root
         self._main_content_container = root

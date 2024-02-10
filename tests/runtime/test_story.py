@@ -3,9 +3,9 @@ import pytest
 from inkpy.runtime.story import Story
 
 
-def test_minimal(datadir):
-    with (datadir / "minimal.ink.json").open("r", encoding="utf-8-sig") as f:
+def test_hello_world(datadir):
+    with (datadir / "hello_world.ink.json").open("r", encoding="utf-8-sig") as f:
         story = Story(f)
 
-    story.continue_()
+    assert story.continue_() == "hello world"
     assert story.can_continue is False
