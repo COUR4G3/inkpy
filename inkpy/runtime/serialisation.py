@@ -58,6 +58,7 @@ import typing as t
 from .call_stack import PushPopType
 from .container import Container
 from .divert import Divert
+from .glue import Glue
 from .object import InkObject
 from .value import BoolValue, FloatValue, IntValue, StringValue, Value
 from .void import Void
@@ -113,8 +114,8 @@ def dump_runtime_container(container: Container):
     if container.name:
         terminator["#n"] = container.name
 
-    if terminator:
-        obj.append(terminator)
+    if terminator or obj:
+        obj.append(terminator or None)
 
     return obj
 
@@ -130,6 +131,9 @@ def dump_runtime_object(obj: InkObject):
     # basic types
     elif isinstance(obj, (BoolValue, FloatValue, IntValue)):
         return obj.value
+
+    elif isinstance(obj, Glue):
+        return "<>"
 
     # void
     elif isinstance(obj, Void):
@@ -189,8 +193,7 @@ def load_runtime_container(obj: list) -> Container:
     for content in obj[:-1]:
         container.add_content(load_runtime_object(content))
 
-    if len(obj) > 0:
-        terminator = obj[-1]
+    if obj and (terminator := obj[-1]):
         for name, content in terminator.items():
             if name == "#f":
                 container.flags = content
@@ -220,6 +223,10 @@ def load_runtime_object(obj) -> InkObject:
             return StringValue(obj[1:])
         elif obj == "\n":
             return StringValue(obj)
+
+        # glue
+        if obj == "<>":
+            return Glue()
 
         # void
         if obj == "void":

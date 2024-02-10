@@ -113,6 +113,9 @@ class Story:
                 "Cannot continue - check can_continue beforing calling continue_"
             )
 
+        self.state.did_safe_exit = False
+        self.state.reset_output()
+
         self.state.variables_state.batch_observing_variable_changes = True
 
         while self.can_continue:
@@ -125,11 +128,13 @@ class Story:
             if output_stream_ends_in_newline:
                 break
 
-        if self._state_snapshot_at_last_newline:
-            self.restore_state_snapshot()
+        if output_stream_ends_in_newline or not self.can_continue:
+            # need to rewind because we've gone too far
+            if self._state_snapshot_at_last_newline:
+                self.restore_snapshot()
 
-        if not self.can_continue:
-            pass  # TODO: stuff
+            if not self.can_continue:
+                pass  # TODO: stuff
 
         self.state.did_safe_exit = False
         self._saw_lookahead_unsafe_function_after_newline = False
@@ -166,7 +171,35 @@ class Story:
             yield self.continue_()
 
     def _continue_single_step(self):
+        # run next step and walk through content
         self._step()
+
+        # run out of content, see if we can follow default invisible choice
+        # and not self.state.call_stack.element_evaluate_from_game
+        if not self.can_continue:
+            self._try_follow_default_invisible_choice()
+
+        # don't rewind during string evaluation
+        if not self.state.in_string_evaluation:
+            # did we previously find a newline that was removed by glue?
+            if self._state_snapshot_at_last_newline:
+                # TODO: check if newline removed, restore or discard
+
+                self.restore_snapshot()
+                return True
+
+            if self.state.output_stream_ends_in_newline:
+                if self.can_continue:
+                    if not self._state_snapshot_at_last_newline:
+                        self.state_snapshot()
+
+                else:
+                    self.discard_snapshot()
+
+        return False
+
+    def _try_follow_default_invisible_choice(self):
+        return
 
     def _next_content(self):
         # divert, if applicable
@@ -231,7 +264,7 @@ class Story:
         self.state.current_pointer = pointer
 
         content = pointer.resolve()
-        is_logic_or_flow_control = self._perform_login_and_flow_control(content)
+        is_logic_or_flow_control = self._perform_logic_and_flow_control(content)
 
         # has flow been forced to end by flow control above?
         if not pointer:
@@ -263,7 +296,7 @@ class Story:
 
         # TODO: control command
 
-    def _perform_login_and_flow_control(self, content):
+    def _perform_logic_and_flow_control(self, content):
         return False
 
     @property
@@ -297,6 +330,10 @@ class Story:
     def current_warnings(self) -> list[str]:
         """Any warnings during evaluation of the story."""
         return self.state.current_warnings
+
+    def discard_snapshot(self):
+        """Discard the previous snapshot."""
+        self._state_snapshot_at_last_newline = None
 
     @property
     def global_tags(self) -> list[str]:
@@ -437,13 +474,22 @@ class Story:
 
     def reset_state(self):
         """Reset story back to its initial state."""
-
         self.state = State(self)
         self.reset_globals()
 
     def reset_warnings(self):
         """Reset all warnings from execution."""
         self.state.reset_warnings()
+
+    def restore_snapshot(self):
+        """Restore the state from the previous snapshot."""
+        self.state = self._state_snapshot_at_last_newline
+        self._state_snapshot_at_last_newline = None
+
+    def state_snapshot(self):
+        """Take a snapshot of the current state."""
+        self._state_snapshot_at_last_newline = self.state
+        self.state = self.state.copy()
 
     def unbind_external_function(self, name: str):
         """Unbind a previously bound external function."""
@@ -482,6 +528,9 @@ class Story:
     @property
     def variables_state(self) -> VariablesState:
         return self.state.variables_state
+
+    def visit_container(self, container, at_start=True):
+        return
 
 
 class ExternalFunction:

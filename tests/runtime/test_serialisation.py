@@ -76,7 +76,7 @@ def test_dump_runtime_container_with_content():
     container.add_content(StringValue("\n"))
     obj = serialisation.dump_runtime_container(container)
     assert isinstance(obj, list)
-    assert len(obj) == 1
+    assert len(obj) == 2
 
 
 def test_dump_runtime_container_with_named_content():
@@ -84,7 +84,7 @@ def test_dump_runtime_container_with_named_content():
     container.add_content(Container("bar"))
     obj = serialisation.dump_runtime_container(container)
     assert isinstance(obj, list)
-    assert len(obj) == 1
+    assert len(obj) == 2
     assert obj[0][-1]["#n"] == "bar"
 
 
@@ -236,14 +236,14 @@ def test_load_runtime_container_named():
 
 
 def test_load_runtime_container_with_content():
-    obj = serialisation.load_runtime_container([[], {}])
+    obj = serialisation.load_runtime_container([[], None])
     assert isinstance(obj, Container)
     assert len(obj.content) == 1
     assert len(obj.named_content) == 0
 
 
 def test_load_runtime_container_with_named_content():
-    obj = serialisation.load_runtime_container([[{"#n": "bar"}], {}])
+    obj = serialisation.load_runtime_container([[{"#n": "bar"}], None])
     assert isinstance(obj, Container)
     assert len(obj.content) == 1
     assert len(obj.named_content) == 1

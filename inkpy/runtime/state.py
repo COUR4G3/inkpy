@@ -13,6 +13,7 @@ from .flow import Flow
 from .object import InkObject
 from .pointer import Pointer
 from .variables_state import VariablesState
+from .value import StringValue
 
 
 if t.TYPE_CHECKING:
@@ -127,7 +128,9 @@ class State:
                     text.append(content.value)
 
             # TODO: clean output whitespace
-            self._current_text = "".join(text)
+            self._current_text = (
+                " ".join(text).replace(" \n", "\n").replace("\n ", "\n")
+            )
             self._output_stream_text_dirty = False
 
         return self._current_text
@@ -163,6 +166,10 @@ class State:
     def in_expression_evaluation(self, value: bool):
         self.call_stack.current_element.in_expression_evaluation = value
 
+    @property
+    def in_string_evaluation(self) -> bool:
+        return False  # TODO: work this out
+
     def mark_output_stream_dirty(self):
         self._output_stream_tags_dirty = True
         self._output_stream_text_dirty = True
@@ -170,6 +177,17 @@ class State:
     @property
     def output_stream(self) -> list[InkObject]:
         return self.current_flow.output_stream
+
+    @property
+    def output_stream_ends_in_newline(self) -> bool:
+        print(self.output_stream)
+        for content in reversed(self.output_stream):
+            if content.value == "\n":
+                return True
+
+            break
+
+        return False
 
     @property
     def previous_pointer(self) -> Pointer | None:
@@ -182,7 +200,24 @@ class State:
     def push_to_output_stream(self, content: InkObject):
         # TODO: split head and tail whitespace
 
-        self._push_to_output_stream(content)
+        if isinstance(content, StringValue):
+            text = content.value.strip()
+
+            if not text:
+                if "\n" in content.value:
+                    self._push_to_output_stream(StringValue("\n"))
+                return
+
+            if content.value.rstrip() != text:
+                self._push_to_output_stream(StringValue("\n"))
+
+            self._push_to_output_stream(StringValue(text))
+
+            if content.value.lstrip() != text:
+                self._push_to_output_stream(StringValue("\n"))
+        else:
+            self._push_to_output_stream(content)
+
         self.mark_output_stream_dirty()
 
     def _push_to_output_stream(self, content: InkObject):
@@ -199,7 +234,7 @@ class State:
     def reset_errors(self):
         self.current_errors.clear()
 
-    def reset_output(self, content: list[InkObject]):
+    def reset_output(self, content: list[InkObject] | None = None):
         self.output_stream.clear()
         if content:
             self.output_stream.extend(content)
