@@ -183,11 +183,18 @@ class Story:
         if not self.state.in_string_evaluation:
             # did we previously find a newline that was removed by glue?
             if self._state_snapshot_at_last_newline:
-                # TODO: check if newline removed, restore or discard
+                change = self._check_if_newline_still_exists()
 
-                self.restore_snapshot()
-                return True
+                # definitely content after newline, rewind
+                if change == "extended_beyond_newline":
+                    self.restore_snapshot()
+                    return True
 
+                # glue removed content, discard snapshot
+                elif change == "newline_removed":
+                    self.discard_snapshot()
+
+            # current content ends in newline
             if self.state.output_stream_ends_in_newline:
                 if self.can_continue:
                     if not self._state_snapshot_at_last_newline:
@@ -197,6 +204,31 @@ class Story:
                     self.discard_snapshot()
 
         return False
+
+    def _check_if_newline_still_exists(self):
+        snapshot = self._state_snapshot_at_last_newline
+        prev_text = snapshot.current_text
+
+        still_exists = (
+            len(self.current_text) >= len(prev_text)
+            and len(prev_text) > 0
+            and self.current_text[-1] == "\n"
+        )
+
+        if len(self.current_text) == len(prev_text):
+            return "no_change"
+
+        # TODO: tag_count
+
+        if not still_exists:
+            return "newline_removed"
+
+        # TODO: tag count
+
+        if len(self.current_text.rstrip()) > len(prev_text):
+            return "extended_beyond_newline"
+
+        return "no_change"
 
     def _try_follow_default_invisible_choice(self):
         return

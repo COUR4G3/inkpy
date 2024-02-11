@@ -10,6 +10,7 @@ from . import serialisation
 from .call_stack import CallStack
 from .choice import Choice
 from .flow import Flow
+from .glue import Glue
 from .object import InkObject
 from .pointer import Pointer
 from .variables_state import VariablesState
@@ -223,7 +224,11 @@ class State:
     def _push_to_output_stream(self, content: InkObject):
         include_in_output = True
 
-        # TODO: glue
+        if isinstance(content, Glue):
+            if self.output_stream[-1].value == "\n":
+                raise Exception("popped new line")
+                self.output_stream.pop()
+                include_in_output = True
 
         # TODO: trim index and newlines
 
