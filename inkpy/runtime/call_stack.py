@@ -76,6 +76,13 @@ class CallStack:
     def call_stack(self) -> list[Element]:
         return self.current_thread.callstack
 
+    def copy(self) -> "CallStack":
+        call_stack = CallStack()
+
+        call_stack.threads = [t.copy() for t in self.threads]
+
+        return call_stack
+
     @property
     def current_element(self) -> "Element":
         thread = self.threads[-1]

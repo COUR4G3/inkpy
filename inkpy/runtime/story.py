@@ -210,12 +210,12 @@ class Story:
         prev_text = snapshot.current_text
 
         still_exists = (
-            len(self.current_text) >= len(prev_text)
+            len(self.state.current_text) >= len(prev_text)
             and len(prev_text) > 0
-            and self.current_text[-1] == "\n"
+            and self.current_text[len(prev_text) - 1] == "\n"
         )
 
-        if len(self.current_text) == len(prev_text):
+        if len(self.current_text) == len(prev_text) and still_exists:
             return "no_change"
 
         # TODO: tag_count

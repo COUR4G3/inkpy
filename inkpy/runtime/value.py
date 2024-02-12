@@ -54,3 +54,11 @@ class IntValue(Value):
 class StringValue(Value):
     def __str__(self):
         return self.value
+
+    @property
+    def is_newline(self) -> bool:
+        return self.value == "\n"
+
+    @property
+    def is_non_whitespace(self) -> bool:
+        return bool(self.value.strip())

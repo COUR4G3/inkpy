@@ -75,17 +75,15 @@ class State:
         state = State(self.story)
 
         state.current_flow = Flow(self.current_flow.name, self.story)
+        state.current_flow.call_stack = self.call_stack.copy()
         state.diverted_pointer = self.diverted_pointer
+        state.previous_pointer = self.previous_pointer
 
         self.current_errors.extend(self.current_errors)
-
         self.current_warnings.extend(self.current_warnings)
 
         state.output_stream.extend(self.output_stream)
-        state._current_tags.extend(self._current_tags)
-        state._current_text = self._current_text
-        state._output_stream_tags_dirty = self._output_stream_tags_dirty
-        state._output_stream_text_dirty = self._output_stream_text_dirty
+        state.mark_output_stream_dirty()
 
         return state
 
@@ -124,9 +122,9 @@ class State:
             in_tag = False
             for content in self.output_stream:
                 # TODO: handle string value OR control command
-
-                if not in_tag and content:
-                    text.append(content.value)
+                if isinstance(content, StringValue):
+                    if not in_tag and content:
+                        text.append(content.value)
 
             # TODO: clean output whitespace
             self._current_text = (
@@ -180,13 +178,19 @@ class State:
         return self.current_flow.output_stream
 
     @property
-    def output_stream_ends_in_newline(self) -> bool:
-        print(self.output_stream)
-        for content in reversed(self.output_stream):
-            if content.value == "\n":
-                return True
+    def output_stream_contains_content(self) -> bool:
+        return any(isinstance(c, StringValue) for c in self.output_stream)
 
-            break
+    @property
+    def output_stream_ends_in_newline(self) -> bool:
+        for output in reversed(self.output_stream):
+            # if not isinstance(output, ControlCommand):
+            #     break
+            if isinstance(output, StringValue):
+                if output.is_newline:
+                    return True
+                elif output.is_non_whitespace:
+                    break
 
         return False
 
@@ -199,38 +203,17 @@ class State:
         self.call_stack.current_thread.previous_pointer = value
 
     def push_to_output_stream(self, content: InkObject):
-        # TODO: split head and tail whitespace
-
-        if isinstance(content, StringValue):
-            text = content.value.strip()
-
-            if not text:
-                if "\n" in content.value:
-                    self._push_to_output_stream(StringValue("\n"))
-                return
-
-            if content.value.rstrip() != text:
-                self._push_to_output_stream(StringValue("\n"))
-
-            self._push_to_output_stream(StringValue(text))
-
-            if content.value.lstrip() != text:
-                self._push_to_output_stream(StringValue("\n"))
-        else:
-            self._push_to_output_stream(content)
-
-        self.mark_output_stream_dirty()
-
-    def _push_to_output_stream(self, content: InkObject):
         include_in_output = True
 
-        if isinstance(content, Glue):
-            if self.output_stream[-1].value == "\n":
-                raise Exception("popped new line")
+        if isinstance(content, StringValue):
+            if content.is_newline and isinstance(self.output_stream[-1], Glue):
+                include_in_output = False
                 self.output_stream.pop()
-                include_in_output = True
-
-        # TODO: trim index and newlines
+                self.mark_output_stream_dirty()
+            elif content.is_newline and not self.output_stream_contains_content:
+                include_in_output = False
+            elif not content.is_newline:
+                content = StringValue(content.value.strip())
 
         if include_in_output:
             self.output_stream.append(content)
