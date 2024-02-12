@@ -19,6 +19,28 @@ class Divert(InkObject):
         self._target_path = None
         self._target_pointer = None
 
+        super().__init__()
+
+    def __eq__(self, other):
+        if isinstance(other, Divert):
+            if self.has_variable_target == other.has_variable_target:
+                if self.has_variable_target:
+                    return self.variable_divert_name == other.variable_divert_name
+                else:
+                    return self.target_path == other.target_path
+
+    def __repr__(self):
+        if self.has_variable_target:
+            return f"Divert(variable:{self.variable_divert_name})"
+        elif not self.target_path:
+            return "Divert(null)"
+        else:
+            return (
+                f"Divert{self.is_conditional and '?' or ''} "
+                f"{self.stack_push_type.value} -> {self.target_path_string!r} "
+                f"({self.target_path!r})"
+            )
+
     @property
     def has_variable_target(self):
         return self.variable_divert_name is not None
@@ -54,7 +76,7 @@ class Divert(InkObject):
     @property
     def target_pointer(self):
         if not self._target_pointer:
-            target = self.resolve_path(self._target_path).obj
+            target = self.resolve_path(self._target_path).content
 
             last_component = self._target_path.last_component
             if last_component.is_index:

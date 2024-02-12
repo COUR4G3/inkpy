@@ -76,6 +76,16 @@ class CallStack:
     def call_stack(self) -> list[Element]:
         return self.current_thread.callstack
 
+    def can_pop(self, type: PushPopType | None = None) -> bool:
+        if not type:
+            return len(self.call_stack) > 1
+
+        return self.current_element.type == type
+
+    @property
+    def can_pop_thread(self) -> bool:
+        return len(self.threads) > 1 and not self.element_is_evaluate_from_game
+
     def copy(self) -> "CallStack":
         call_stack = CallStack()
 
@@ -113,6 +123,10 @@ class CallStack:
         return len(self.elements)
 
     @property
+    def element_is_evaluate_from_game(self) -> bool:
+        return self.current_element.type == PushPopType.FunctionEvaluationFromGame
+
+    @property
     def elements(self) -> list["CallStack.Element"]:
         return self.call_stack
 
@@ -124,6 +138,35 @@ class CallStack:
 
         if name in context_element.temporary_variables:
             return context_element.temporary_variables[name]
+
+    def pop(self, type: PushPopType | None = None):
+        if not self.can_pop(type):
+            raise RuntimeError("Mismatch push/pop in callstack")
+
+        self.call_stack.pop()
+
+    def pop_thread(self):
+        if not self.can_pop_thread:
+            raise RuntimeError("Can't pop thread")
+
+        self.threads.remove(self.current_thread)
+
+    def push(
+        self,
+        type: PushPopType,
+        external_evaluation_stack_height: int = 0,
+        output_stream_length_with_pushed: int = 0,
+    ):
+        element = CallStack.Element(
+            type,
+            self.current_element.current_pointer,
+            in_expression_evaluation=False,
+        )
+
+        element.evaluation_stack_height_when_pushed = external_evaluation_stack_height
+        element.function_start_in_output_stream = output_stream_length_with_pushed
+
+        self.call_stack.append(element)
 
     def reset(self):
         thread = CallStack.Thread()

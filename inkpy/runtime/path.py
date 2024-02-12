@@ -76,10 +76,7 @@ class Path:
         return len(self.components)
 
     def __repr__(self):
-        return f"Path({self})"
-
-    def __str__(self):
-        return f"{self.is_relative and '.' or ''}{'.'.join(self.components)}"
+        return f"{self.is_relative and '.' or ''}{'.'.join(map(str, self.components))}"
 
     def __truediv__(self, other: Component | t.Type["Path"] | int | str):
         if isinstance(other, Path):

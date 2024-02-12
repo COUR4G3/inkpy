@@ -7,15 +7,19 @@ import typing as t
 from collections import defaultdict
 
 from . import serialisation, typing
+from .call_stack import PushPopType
 from .choice import Choice
 from .container import Container
+from .control_command import ControlCommand
 from .divert import Divert
 from .exceptions import ExternalBindingsValidationError, StoryException
 from .object import InkObject
 from .path import Path
 from .pointer import Pointer
 from .state import State
+from .value import StringValue, Value
 from .variables_state import VariablesState
+from .void import Void
 
 
 logger = logging.getLogger("inkpy")
@@ -72,7 +76,7 @@ class Story:
         self.state.set_chosen_path(path, incrementing_turn_index)
 
         # take note of newly visited container for read counts, turns etc.
-        self.visit_changed_container_due_to_divert()
+        self.visit_changed_containers_due_to_divert()
 
     def choose_path_string(
         self, path: str, reset_callstack: bool = True, args: list | None = None
@@ -239,7 +243,7 @@ class Story:
             self.state.current_pointer = self.state.diverted_pointer
             self.state.diverted_pointer = None
 
-            self.visit_changed_container_due_to_divert()
+            self.visit_changed_containers_due_to_divert()
 
             # has valid content?
             if self.state.current_pointer:
@@ -326,9 +330,120 @@ class Story:
         # step to next content, and follow diverts if applicable
         self._next_content()
 
-        # TODO: control command
+        # start a new thread should be done after incrementing, so that you can
+        # return to the content after instruction
+        if (
+            isinstance(content, ControlCommand)
+            and content.type == ControlCommand.CommandType.StartThread
+        ):
+            self.state.call_stack.push_thread()
 
     def _perform_logic_and_flow_control(self, content):
+        if not content:
+            return False
+
+        if isinstance(content, Divert):
+            if content.is_conditional:
+                value = self.state.pop_evaluation_stack()
+
+                if not self.is_truthy(value):
+                    return True
+
+            if content.has_variable_target:
+                raise NotImplementedError()
+            elif content.is_external:
+                raise NotImplementedError()
+            else:
+                self.state.diverted_pointer = content.target_pointer
+
+            if content.pushes_to_stack:
+                self.state.call_stack.push(
+                    content.stack_push_type,
+                    output_stream_length_with_pushed=len(self.state.output_stream),
+                )
+
+            if not self.state.diverted_pointer and not content.is_external:
+                self._add_error(f"Divert resolution failed: {content!r}")
+
+            return True
+
+        elif isinstance(content, ControlCommand):
+            if content.type == ControlCommand.CommandType.EvalStart:
+                assert not self.state.in_expression_evaluation
+                self.state.in_expression_evaluation = True
+            elif content.type == ControlCommand.CommandType.EvalEnd:
+                assert self.state.in_expression_evaluation
+                self.state.in_expression_evaluation = False
+            elif content.type == ControlCommand.CommandType.EvalOutput:
+                if len(self.state.evaluation_stack) > 0:
+                    output = self.state.pop_evaluation_stack()
+
+                    # functions may evaluation to void
+                    if not isinstance(output, Void):
+                        text = StringValue(str(output))
+
+                        self.state.push_to_output_stream(text)
+            elif content.type == ControlCommand.CommandType.NoOp:
+                pass
+            elif content.type == ControlCommand.CommandType.Duplicate:
+                self.state.push_evaluation_stack(self.state.peek_evaluation_stack())
+            elif content.type == ControlCommand.CommandType.PopEvaluatedValue:
+                self.state.pop_evaluation_stack()
+            elif content.type == ControlCommand.CommandType.PopFunction:
+                type = PushPopType.Function
+
+                if self.state.try_exit_function_evaluation_from_game():
+                    pass
+                elif not self.state.call_stack.can_pop(type):
+                    message = f"Found {type}, when expected "
+
+                    if not self.state.call_stack.can_pop():
+                        message = "end of flow (-> END or choice)"
+                    else:
+                        message = "function return statement (~return)"
+
+                    self._add_error(message)
+                else:
+                    self.state.pop_callstack()
+            elif content.type == ControlCommand.CommandType.PopTunnel:
+                type = PushPopType.Tunnel
+
+                value = self.state.pop_evaluation_stack()
+                if not isinstance(value, Void):
+                    raise NotImplementedError()
+
+                override_tunnel_return_target = None
+
+                if self.state.try_exit_function_evaluation_from_game():
+                    pass
+                elif not self.state.call_stack.can_pop(type):
+                    message = f"Found {type}, when expected "
+
+                    if not self.state.call_stack.can_pop():
+                        message = "end of flow (-> END or choice)"
+                    else:
+                        message = "tunnel onwards statement (->->)"
+
+                    self._add_error(message)
+                else:
+                    self.state.pop_callstack()
+
+                    if override_tunnel_return_target:
+                        self.state.diverted_pointer = self.pointer_at_path(
+                            override_tunnel_return_target.target_path
+                        )
+
+            elif content.type == ControlCommand.CommandType.Done:
+                if self.state.call_stack.can_pop_thread:
+                    self.state.call_stack.pop_thread()
+                else:
+                    self.state.did_safe_exit = True
+                    self.state.current_pointer = None
+            else:
+                raise NotImplementedError(content.type)
+
+            return True
+
         return False
 
     @property
@@ -367,6 +482,12 @@ class Story:
         """Discard the previous snapshot."""
         self._state_snapshot_at_last_newline = None
 
+    def get_global_variable(self, name: str):
+        """Get a named global variable."""
+        return self.state.variables_state.get(name)
+
+    get_variable = get_global_variable
+
     @property
     def global_tags(self) -> list[str]:
         """Any global tags associated with the story."""
@@ -385,6 +506,15 @@ class Story:
         return self.state.has_warning
 
     has_warnings = has_warning
+
+    def is_truthy(self, value: InkObject) -> bool:
+        truthy = False
+        if isinstance(value, Value):
+            # TODO: check for divert target value
+
+            return bool(value)
+
+        return truthy
 
     def load(self, data: str | t.TextIO):
         if isinstance(data, str):
@@ -562,6 +692,9 @@ class Story:
         return self.state.variables_state
 
     def visit_container(self, container, at_start=True):
+        return
+
+    def visit_changed_containers_due_to_divert(self):
         return
 
 

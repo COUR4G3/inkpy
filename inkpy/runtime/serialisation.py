@@ -57,6 +57,7 @@ import typing as t
 
 from .call_stack import PushPopType
 from .container import Container
+from .control_command import ControlCommand
 from .divert import Divert
 from .glue import Glue
 from .object import InkObject
@@ -228,6 +229,9 @@ def load_runtime_object(obj) -> InkObject:
         if obj == "<>":
             return Glue()
 
+        if ControlCommand.exists_with_name(obj):
+            return ControlCommand(obj)
+
         # void
         if obj == "void":
             return Void()
@@ -245,14 +249,14 @@ def load_runtime_object(obj) -> InkObject:
 
         if value := obj.get("->"):
             is_divert = True
-        if value := obj.get("f()"):
+        elif value := obj.get("f()"):
             is_divert = True
             pushes_to_stack = True
-        if value := obj.get("->t->"):
+        elif value := obj.get("->t->"):
             is_divert = True
             pushes_to_stack = True
             stack_push_type = PushPopType.Tunnel
-        if value := obj.get("x()"):
+        elif value := obj.get("x()"):
             is_divert = True
             is_external = True
 

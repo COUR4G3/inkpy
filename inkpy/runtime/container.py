@@ -7,6 +7,7 @@ from enum import IntEnum
 
 from .object import InkObject
 from .path import Path
+from .search_result import SearchResult
 
 
 class Container(InkObject):
@@ -68,6 +69,46 @@ class Container(InkObject):
             raise TypeError("Cannot add name content without name")
 
         self.named_content[name] = content
+
+    def content_at_path(
+        self, path: Path, start: int = 0, length: int = -1
+    ) -> SearchResult:
+        if length == -1:
+            length = len(path)
+
+        result = SearchResult(approximate=False)
+
+        container = content = self
+
+        for i in range(start, length):
+            comp = path[i]
+
+            if not isinstance(container, Container):
+                result.approximate = True
+                break
+
+            content = container.content_with_path_component(comp)
+
+            if not content:
+                result.approximate = True
+                break
+
+            container = content
+
+        result.content = content
+
+        return result
+
+    def content_with_path_component(self, comp: Path.Component) -> InkObject | None:
+        if comp.is_index:
+            try:
+                return self.content[comp.index]
+            except IndexError:
+                return
+        elif comp.is_parent:
+            return self.parent
+        else:
+            return self.named_content.get(comp.name)
 
     def dump_string_hierachy(
         self, current_content: t.Optional[InkObject] = None, indent: int = 0

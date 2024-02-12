@@ -4,6 +4,7 @@ from .path import Path
 
 if t.TYPE_CHECKING:
     from .container import Container
+    from .search_result import SearchResult
 
 
 class InkObject:
@@ -55,3 +56,35 @@ class InkObject:
                 self._path = Path(*components)
 
         return self._path
+
+    def resolve_path(self, path: "Path") -> "SearchResult":
+        from .container import Container
+
+        if path.is_relative:
+            nearest_container = self
+            if not isinstance(nearest_container, Container):
+                assert self.parent, "Can't resolve relative path without parent"
+
+                nearest_container = self.parent
+
+                assert isinstance(
+                    nearest_container, Container
+                ), "Expected parent to be a container"
+
+            return nearest_container.content_at_path(path)
+        else:
+            return self.root_content_container.content_at_path(path)
+
+    @property
+    def root_content_container(self) -> "Container":
+        from .container import Container
+
+        ancestor = self
+        while ancestor.parent:
+            ancestor = ancestor.parent
+            assert isinstance(ancestor, Container), "Expected parent to be a container"
+        return ancestor
+
+
+"""<iframe src="https://scribehow.com/embed/Registering_a_Payment_for_a_Foreign_Currency_Invoice__lWwPvSx5SVaVPR4JqZ8fmQ" width="100%" height="640" allowfullscreen frameborder="0"></iframe>
+https://scribehow.com/shared/Registering_a_Payment_for_a_Foreign_Currency_Invoice__lWwPvSx5SVaVPR4JqZ8fmQ"""

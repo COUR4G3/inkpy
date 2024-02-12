@@ -7,7 +7,7 @@ import typing as t
 import json_stream
 
 from . import serialisation
-from .call_stack import CallStack
+from .call_stack import CallStack, PushPopType
 from .choice import Choice
 from .flow import Flow
 from .glue import Glue
@@ -194,6 +194,17 @@ class State:
 
         return False
 
+    def peek_evaluation_stack(self) -> InkObject:
+        return self.evaluation_stack[-1]
+
+    def pop_callstack(self, type: PushPopType | None = None):
+        # TODO: trim whitepsace from function end
+
+        self.call_stack.pop(type)
+
+    def pop_evaluation_stack(self) -> InkObject:
+        return self.evaluation_stack.pop()
+
     @property
     def previous_pointer(self) -> Pointer | None:
         return self.call_stack.current_thread.previous_pointer
@@ -201,6 +212,11 @@ class State:
     @previous_pointer.setter
     def previous_pointer(self, value: Pointer | None):
         self.call_stack.current_thread.previous_pointer = value
+
+    def push_evaluation_stack(self, content: InkObject):
+        # TODO: check if list value
+
+        self.evaluation_stack.append(content)
 
     def push_to_output_stream(self, content: InkObject):
         include_in_output = True
@@ -229,3 +245,14 @@ class State:
 
     def reset_warnings(self):
         self.current_warnings.clear()
+
+    def try_exit_function_evaluation_from_game(self) -> bool:
+        if (
+            self.call_stack.current_element.type
+            == PushPopType.FunctionEvaluationFromGame
+        ):
+            self.current_pointer = None
+            self.did_safe_exit = True
+            return True
+
+        return False
