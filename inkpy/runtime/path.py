@@ -15,6 +15,16 @@ class Path:
                 self.index = None
                 self.name = index_or_name
 
+        def __eq__(self, other):
+            if isinstance(other, Path.Component):
+                if self.is_index == other.is_index:
+                    if self.is_index:
+                        return self.index == other.index
+                    else:
+                        return self.name == other.name
+
+            return False
+
         def __str__(self):
             return self.is_index and str(self.index) or self.name
 

@@ -80,9 +80,7 @@ class Container(InkObject):
 
         container = content = self
 
-        for i in range(start, length):
-            comp = path[i]
-
+        for comp in path.components[start:length]:
             if not isinstance(container, Container):
                 result.approximate = True
                 break
@@ -136,7 +134,7 @@ class Container(InkObject):
 
             for content in self.named_content.values():
                 content = t.cast(Container, content)
-                lines.append(content.dump_string_hierachy(current_content, indent))
+                # lines.append(content.dump_string_hierachy(current_content, indent))
 
         indent -= 2
         lines.append(f"{' ' * indent}]")

@@ -3,6 +3,7 @@ import typing as t
 from .call_stack import CallStack
 from .exceptions import StoryException
 from .value import Value
+from .variable_assignment import VariableAssignment
 
 
 if t.TYPE_CHECKING:
@@ -51,6 +52,34 @@ class VariablesState:
                 raise RuntimeError(f"Invalid value passed to VariableState: {value!r}")
 
         self.set_global_variable(name, ink_value)
+
+    def assign(self, assign: VariableAssignment, value: Value):
+        name = assign.variable_name
+        index = -1
+
+        if assign.is_new_declaration:
+            set_global = assign.is_global
+        else:
+            set_global = name in self
+
+        if assign.is_new_declaration:
+            if value is None:
+                raise NotImplementedError()
+        else:
+            existing_pointer = None
+            while True:
+                existing_pointer = self._get_raw_variable(name, index)
+                if existing_pointer is None:
+                    break
+
+                raise NotImplementedError()
+
+        if set_global:
+            self.set_global_variable(name, value)
+        else:
+            self.call_stack.set_temporary_variable(
+                name, value, assign.is_new_declaration, index
+            )
 
     @property
     def batch_observing_variable_changes(self) -> bool:

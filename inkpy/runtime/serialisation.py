@@ -62,6 +62,8 @@ from .divert import Divert
 from .glue import Glue
 from .object import InkObject
 from .value import BoolValue, FloatValue, IntValue, StringValue, Value
+from .variable_assignment import VariableAssignment
+from .variable_reference import VariableReference
 from .void import Void
 
 
@@ -77,7 +79,7 @@ logger = logging.getLogger(__name__)
 
 
 def _dump(story: "Story", output: t.TextIO | None = None) -> str | None:
-    root = dump_runtime_container(story.root_content_container)
+    root = dump_runtime_container(story._main_content_container)
 
     data = {
         "inkVersion": INK_VERSION_CURRENT,
@@ -280,6 +282,30 @@ def load_runtime_object(obj) -> InkObject:
                     divert.external_args = int(value)
 
             return divert
+
+        # variable reference
+        if value := obj.get("VAR?"):
+            return VariableReference(str(value))
+        elif value := obj.get("CNT?"):
+            read_count_ref = VariableReference()
+            read_count_ref.path_string_for_count = str(value)
+            return read_count_ref
+
+        # variable assignment
+        is_variable_assign = False
+        is_global_var = False
+        if value := obj.get("VAR="):
+            is_variable_assign = True
+            is_global_var = True
+        elif value := obj.get("temp="):
+            is_variable_assign = True
+
+        if is_variable_assign:
+            variable_name = str(value)
+            is_new_declaration = not obj.get("re")
+            var_assign = VariableAssignment(variable_name, is_new_declaration)
+            var_assign.is_global = is_global_var
+            return var_assign
 
     if obj is None:
         return

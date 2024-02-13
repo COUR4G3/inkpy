@@ -13,7 +13,7 @@ from inkpy.runtime.void import Void
 @pytest.fixture
 def story():
     story = Story()
-    story.root_content_container = Container()
+    story._main_content_container = Container()
 
     return story
 

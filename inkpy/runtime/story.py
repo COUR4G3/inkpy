@@ -16,8 +16,11 @@ from .exceptions import ExternalBindingsValidationError, StoryException
 from .object import InkObject
 from .path import Path
 from .pointer import Pointer
+from .search_result import SearchResult
 from .state import State
-from .value import StringValue, Value
+from .value import IntValue, StringValue, Value
+from .variable_assignment import VariableAssignment
+from .variable_reference import VariableReference
 from .variables_state import VariablesState
 from .void import Void
 
@@ -25,11 +28,13 @@ from .void import Void
 logger = logging.getLogger("inkpy")
 
 
-class Story:
+class Story(InkObject):
     INK_VERSION_CURRENT = 21
     INK_VERSION_MINIMUM_COMPATIBLE = 18
 
     def __init__(self, data: str | t.TextIO | None = None):
+        super().__init__()
+
         self.allow_external_function_fallbacks = False
 
         self._evaluation_content_container: Container | None = None
@@ -102,8 +107,11 @@ class Story:
                     f"you want! Full stack trace: \n{trace}"
                 )
 
-        self.state.pass_arguments_to_evaulation_stack(args)
+        self.state.pass_arguments_to_evaluation_stack(args)
         self.choose_path(Path(path))
+
+    def content_at_path(self, path: Path) -> SearchResult:
+        return self.main_content_container.content_at_path(path)
 
     def continue_(self):
         """Continue story execution and return the next line of text."""
@@ -154,7 +162,7 @@ class Story:
                     self._on_error(error)
 
                 self.reset_errors()
-            else:
+            elif self.state.has_error:
                 raise StoryException(
                     f"Ink had {len(self.state.current_errors)} error(s) and "
                     f"{len(self.state.current_warnings)} warning(s). The first error "
@@ -240,7 +248,7 @@ class Story:
     def _next_content(self):
         # divert, if applicable
         if self.state.diverted_pointer:
-            self.state.current_pointer = self.state.diverted_pointer
+            self.state.current_pointer = self.state.diverted_pointer.copy()
             self.state.diverted_pointer = None
 
             self.visit_changed_containers_due_to_divert()
@@ -250,35 +258,57 @@ class Story:
                 return
 
         # increment the pointer
-        successful_increment = True
-
-        pointer = self.state.current_pointer.copy()
-        pointer.index += 1
-
-        # check if past end of content, then return to the ancestor container
-        while pointer.index >= len(pointer.container.content):
-            successful_increment = False
-
-            ancestor = pointer.container.parent
-
-            if not ancestor:
-                break
-
-            try:
-                index = ancestor.content.index(pointer.container)
-            except IndexError:
-                break
-
-            pointer = Pointer(ancestor, index + 1)
-
+        if self.state.current_pointer:
             successful_increment = True
 
-        if not successful_increment:
-            pointer = None
-        self.state.current_pointer = pointer
+            pointer = self.state.current_pointer.copy()
+            pointer.index += 1
+
+            # check if past end of content, then return to the ancestor container
+            while pointer.index >= len(pointer.container.content):
+                successful_increment = False
+
+                ancestor = pointer.container.parent
+
+                if not ancestor:
+                    break
+
+                try:
+                    index = ancestor.content.index(pointer.container)
+                except IndexError:
+                    break
+
+                pointer = Pointer(ancestor, index + 1)
+
+                successful_increment = True
+
+            if not successful_increment:
+                pointer = None
+
+            self.state.current_pointer = pointer
+        else:
+            successful_increment = False
 
         if not successful_increment:
-            return  # TODO: stuff
+            did_pop = False
+
+            if self.state.call_stack.can_pop(PushPopType.Function):
+                self.state.pop_callstack(PushPopType.Function)
+
+                # this pop was due to a function that didn't return anything
+                if self.state.in_expression_evaluation:
+                    self.state.push_evaluation_stack(Void())
+
+                did_pop = True
+            elif self.state.call_stack.can_pop_thread:
+                self.state.call_stack.pop_thread()
+
+                did_pop = True
+            else:
+                self.state.try_exit_function_evaluation_from_game()
+
+            if did_pop and self.state.current_pointer:
+                self._next_content()
 
     def _step(self):
         should_add_to_stream = True
@@ -395,7 +425,7 @@ class Story:
                 if self.state.try_exit_function_evaluation_from_game():
                     pass
                 elif not self.state.call_stack.can_pop(type):
-                    message = f"Found {type}, when expected "
+                    message = f"Found {type.value}, when expected "
 
                     if not self.state.call_stack.can_pop():
                         message = "end of flow (-> END or choice)"
@@ -417,7 +447,7 @@ class Story:
                 if self.state.try_exit_function_evaluation_from_game():
                     pass
                 elif not self.state.call_stack.can_pop(type):
-                    message = f"Found {type}, when expected "
+                    message = f"Found {type.value}, when expected "
 
                     if not self.state.call_stack.can_pop():
                         message = "end of flow (-> END or choice)"
@@ -439,8 +469,84 @@ class Story:
                 else:
                     self.state.did_safe_exit = True
                     self.state.current_pointer = None
+
+            elif content.type == ControlCommand.CommandType.BeginString:
+                self.state.push_to_output_stream(content)
+
+                assert (
+                    self.state.in_expression_evaluation
+                ), "Expected to be in an expression when evaluating a string"
+                self.state.in_expression_evaluation = False
+
+            elif content.type == ControlCommand.CommandType.BeginTag:
+                self.state.push_to_output_stream(content)
+
+            elif content.type == ControlCommand.CommandType.EndString:
+                content_for_string = []
+                content_to_retain = []
+
+                while self.state.output_stream:
+                    o = self.state.output_stream.pop()
+
+                    if (
+                        isinstance(o, ControlCommand)
+                        and o.type == ControlCommand.CommandType.BeginString
+                    ):
+                        break
+
+                    # TODO: retain tags
+
+                    if isinstance(o, StringValue):
+                        content_for_string.append(o)
+
+                for o in content_to_retain:
+                    self.state.push_to_output_stream(o)
+
+                value = StringValue("".join(map(str, content_for_string)))
+
+                self.state.in_expression_evaluation = True
+                self.state.push_evaluation_stack(value)
+
+            elif content.type == ControlCommand.CommandType.EndTag:
+                if self.state.in_string_evaluation:
+                    raise NotImplementedError()
+                else:
+                    self.state.push_to_output_stream(content)
+
+            elif content.type == ControlCommand.CommandType.End:
+                self.state.force_end()
+
             else:
                 raise NotImplementedError(content.type)
+
+            return True
+
+        elif isinstance(content, VariableAssignment):
+            value = self.state.pop_evaluation_stack()
+            self.state.variables_state.assign(content, value)
+
+            return True
+
+        elif isinstance(content, VariableReference):
+            if content.path_for_count:
+                container = content.container_for_count
+                count = self.state.visit_count_for_container(container)
+                value = IntValue(count)
+            else:
+                value = self.state.variables_state.get(content.name)
+
+                if value is None:
+                    self._add_warning(
+                        f"Variable not found: '{content.name}'. Using default value "
+                        "of 0 (false). This can happen with temporary variables if "
+                        "the declaration hasn't yet been hit. Globals are always "
+                        "given a default value on load if a value doesn't exist in "
+                        "the save state."
+                    )
+
+                    value = IntValue(0)
+
+            self.state.push_evaluation_stack(value)
 
             return True
 
@@ -556,7 +662,6 @@ class Story:
 
         list_defs = data.get("listDefs")
 
-        self.root_content_container = root
         self._main_content_container = root
 
         self.list_defs = list_defs
@@ -613,6 +718,40 @@ class Story:
 
         return f and decorator(f) or decorator
 
+    def pointer_at_path(self, path: Path) -> Pointer:
+        length = len(path)
+        if length == 0:
+            return
+
+        pointer = Pointer()
+
+        if path.last_component.is_index:
+            length = length - 1
+            result = self.main_content_container.content_at_path(path, length=length)
+            pointer.container = result.container
+            pointer.index = path.last_component.index
+        else:
+            result = self.main_content_container.content_at_path(path)
+            pointer.container = result.container
+            pointer.index = -1
+
+        if (
+            result.content is None
+            or result.content == self.main_content_container
+            and length > 0
+        ):
+            self._add_error(
+                f"Failed to find content at path '{path}', and no approximation of "
+                "it was possible."
+            )
+        elif result.approximate:
+            self._add_warning(
+                f"Failed to find content at path '{path}', so it was approximated to: "
+                f"'{result.content.path}'"
+            )
+
+        return pointer
+
     def reset_callstack(self):
         """Unwinds the callstack to reset story evaluation without changing state."""
         self.state.force_end()
@@ -624,7 +763,7 @@ class Story:
     def reset_globals(self):
         """Reset global variables back to their initial defaults."""
 
-        if "global decl" in self.root_content_container.named_content:
+        if "global decl" in self._main_content_container.named_content:
             original_pointer = self.state.current_pointer
 
             self.choose_path(Path("global decl"))
@@ -652,6 +791,48 @@ class Story:
         """Take a snapshot of the current state."""
         self._state_snapshot_at_last_newline = self.state
         self.state = self.state.copy()
+
+    def tags_for_content_at_path(self, path: str) -> list[str]:
+        """Gets any tags associated with a knot or stitch defined at the beginning."""
+        path = Path(path)
+
+        container = self.content_at_path(path).container
+
+        # get first piece of content
+        while True:
+            try:
+                content = container.content[0]
+            except IndexError:
+                break
+
+            if isinstance(content, Container):
+                container = content
+            else:
+                break
+
+        in_tag = False
+        tags = []
+
+        for content in container.content:
+            if isinstance(content, ControlCommand):
+                if content.type == ControlCommand.CommandType.BeginTag:
+                    in_tag = True
+                elif content.type == ControlCommand.CommandType.EndTag:
+                    in_tag = False
+
+            # gather all tags
+            elif in_tag:
+                if not isinstance(content, StringValue):
+                    self._add_warning('"Main" tags contained non-text content')
+                tags.append(content)
+
+            # TODO: shouldn't we handle Tag?
+
+            # anything else, we're done, we only recognise initial tags
+            else:
+                break
+
+        return tags
 
     def unbind_external_function(self, name: str):
         """Unbind a previously bound external function."""

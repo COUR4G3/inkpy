@@ -159,7 +159,7 @@ class CallStack:
     ):
         element = CallStack.Element(
             type,
-            self.current_element.current_pointer,
+            self.current_element.current_pointer.copy(),
             in_expression_evaluation=False,
         )
 

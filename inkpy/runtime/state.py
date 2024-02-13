@@ -1,20 +1,18 @@
 from __future__ import annotations
 
-import json
 import logging
 import typing as t
 
-import json_stream
-
-from . import serialisation
 from .call_stack import CallStack, PushPopType
 from .choice import Choice
+from .control_command import ControlCommand
 from .flow import Flow
 from .glue import Glue
 from .object import InkObject
+from .path import Path
 from .pointer import Pointer
 from .variables_state import VariablesState
-from .value import StringValue
+from .value import StringValue, Value
 
 
 if t.TYPE_CHECKING:
@@ -71,6 +69,35 @@ class State:
     def can_continue(self) -> bool:
         return bool(self.current_pointer and not self.has_error)
 
+    def _clean_output_whitespace(self, text: str) -> str:
+        output = ""
+
+        current_whitespace_start = -1
+        start_of_line = 0
+
+        for i, c in enumerate(text):
+            is_inline_whitespace = c in (" ", "\t")
+
+            if is_inline_whitespace and current_whitespace_start == -1:
+                current_whitespace_start = i
+
+            if not is_inline_whitespace:
+                if (
+                    c != "\n"
+                    and current_whitespace_start > 0
+                    and current_whitespace_start != start_of_line
+                ):
+                    output += " "
+                current_whitespace_start = -1
+
+            if c == "\n":
+                start_of_line = i + 1
+
+            if not is_inline_whitespace:
+                output += c
+
+        return output
+
     def copy(self) -> "State":
         state = State(self.story)
 
@@ -79,11 +106,23 @@ class State:
         state.diverted_pointer = self.diverted_pointer
         state.previous_pointer = self.previous_pointer
 
-        self.current_errors.extend(self.current_errors)
-        self.current_warnings.extend(self.current_warnings)
+        state.current_errors.extend(self.current_errors)
+        state.current_warnings.extend(self.current_warnings)
 
         state.output_stream.extend(self.output_stream)
         state.mark_output_stream_dirty()
+
+        state.variables_state = self.variables_state
+        state.variables_state.call_stack = state.call_stack
+
+        state.evaluation_stack.extend(self.evaluation_stack)
+
+        state._visit_counts = self._visit_counts
+        state._turn_indices = self._turn_indices
+
+        state.current_turn_index = self.current_turn_index
+
+        state.did_safe_exit = self.did_safe_exit
 
         return state
 
@@ -110,6 +149,30 @@ class State:
     @property
     def current_tags(self) -> list[str]:
         if self._output_stream_tags_dirty:
+            self._current_tags.clear()
+
+            text = []
+            in_tag = False
+            for content in self.output_stream:
+                if isinstance(content, ControlCommand):
+                    if content.type == ControlCommand.CommandType.BeginTag:
+                        if in_tag and text:
+                            self._current_tags.append("".join(text))
+                            text.clear()
+                        in_tag = True
+                    elif content.type == ControlCommand.CommandType.EndTag:
+                        if text:
+                            self._current_tags.append("".join(text))
+                            text.clear()
+                        in_tag = False
+                elif in_tag and isinstance(content, StringValue):
+                    text.append(content.value)
+
+                # TODO: handle Tag
+
+            if text:
+                self._current_tags.append("".join(text))
+
             self._output_stream_tags_dirty = False
 
         return self._current_tags
@@ -121,15 +184,16 @@ class State:
 
             in_tag = False
             for content in self.output_stream:
-                # TODO: handle string value OR control command
-                if isinstance(content, StringValue):
-                    if not in_tag and content:
-                        text.append(content.value)
+                if not in_tag and isinstance(content, StringValue):
+                    text.append(content.value)
+                elif isinstance(content, ControlCommand):
+                    if content.type == ControlCommand.CommandType.BeginTag:
+                        in_tag = True
+                    elif content.type == ControlCommand.CommandType.EndTag:
+                        in_tag = False
 
             # TODO: clean output whitespace
-            self._current_text = (
-                " ".join(text).replace(" \n", "\n").replace("\n ", "\n")
-            )
+            self._current_text = self._clean_output_whitespace("".join(text))
             self._output_stream_text_dirty = False
 
         return self._current_text
@@ -194,6 +258,12 @@ class State:
 
         return False
 
+    def pass_arguments_to_evaluation_stack(self, args: list):
+        for arg in args:
+            # TODO: check types
+
+            self.push_evaluation_stack(Value.create(arg))
+
     def peek_evaluation_stack(self) -> InkObject:
         return self.evaluation_stack[-1]
 
@@ -222,14 +292,19 @@ class State:
         include_in_output = True
 
         if isinstance(content, StringValue):
-            if content.is_newline and isinstance(self.output_stream[-1], Glue):
-                include_in_output = False
-                self.output_stream.pop()
-                self.mark_output_stream_dirty()
-            elif content.is_newline and not self.output_stream_contains_content:
-                include_in_output = False
+            if content.is_newline:
+                if self.output_stream and isinstance(self.output_stream[-1], Glue):
+                    include_in_output = False
+                    self.output_stream.pop()
+                    self.mark_output_stream_dirty()
+                elif (
+                    self.call_stack.current_element.function_start_in_output_stream > -1
+                ):
+                    include_in_output = False
+                elif not self.output_stream_contains_content:
+                    include_in_output = False
             elif not content.is_newline:
-                content = StringValue(content.value.strip())
+                content = StringValue(content.value)
 
         if include_in_output:
             self.output_stream.append(content)
@@ -245,6 +320,18 @@ class State:
 
     def reset_warnings(self):
         self.current_warnings.clear()
+
+    def set_chosen_path(self, path: "Path", incrementing_turn_index: bool):
+        self.current_flow.current_choices.clear()
+
+        pointer = self.story.pointer_at_path(path)
+        if pointer.container and pointer.index == -1:
+            pointer.index = 0
+
+        self.current_pointer = pointer
+
+        if incrementing_turn_index:
+            self.current_turn_index += 1
 
     def try_exit_function_evaluation_from_game(self) -> bool:
         if (

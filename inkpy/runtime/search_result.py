@@ -1,3 +1,5 @@
+import typing as t
+
 from dataclasses import dataclass
 
 from .object import InkObject
@@ -7,3 +9,7 @@ from .object import InkObject
 class SearchResult:
     approximate: bool = False
     content: InkObject | None = None
+
+    @property
+    def container(self):
+        return self.content
