@@ -56,12 +56,22 @@ import logging
 import typing as t
 
 from .call_stack import PushPopType
+from .choice_point import ChoicePoint
 from .container import Container
 from .control_command import ControlCommand
 from .divert import Divert
 from .glue import Glue
 from .object import InkObject
-from .value import BoolValue, FloatValue, IntValue, StringValue, Value
+from .path import Path
+from .value import (
+    BoolValue,
+    DivertTargetValue,
+    FloatValue,
+    IntValue,
+    StringValue,
+    Value,
+    VariablePointerValue,
+)
 from .variable_assignment import VariableAssignment
 from .variable_reference import VariableReference
 from .void import Void
@@ -239,9 +249,16 @@ def load_runtime_object(obj) -> InkObject:
             return Void()
 
     elif isinstance(obj, dict):
-        # TODO: divert target value
+        # divert target value
+        if value := obj.get("^->"):
+            return DivertTargetValue(Path(str(value)))
 
-        # TODO: variable pointer
+        # variable pointer value
+        if value := obj.get("^var"):
+            var_pointer = VariablePointerValue(str(value))
+            if value := obj.get("ci"):
+                var_pointer.index = int(value)
+            return var_pointer
 
         # divert
         is_divert = False
@@ -283,6 +300,16 @@ def load_runtime_object(obj) -> InkObject:
 
             return divert
 
+        # choice point
+        if value := obj.get("*"):
+            choice = ChoicePoint()
+            choice.path_string_on_choice = str(value)
+
+            if value := obj.get("flg"):
+                choice.flags = int(value)
+
+            return choice
+
         # variable reference
         if value := obj.get("VAR?"):
             return VariableReference(str(value))
@@ -306,6 +333,10 @@ def load_runtime_object(obj) -> InkObject:
             var_assign = VariableAssignment(variable_name, is_new_declaration)
             var_assign.is_global = is_global_var
             return var_assign
+
+        # TODO: legacy tag
+
+        # TODO: list value
 
     if obj is None:
         return

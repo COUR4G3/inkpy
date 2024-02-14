@@ -5,6 +5,7 @@ import typing as t
 
 from .call_stack import CallStack, PushPopType
 from .choice import Choice
+from .container import Container
 from .control_command import ControlCommand
 from .flow import Flow
 from .glue import Glue
@@ -199,7 +200,11 @@ class State:
         return self._current_text
 
     def force_end(self):
+        self.call_stack.reset()
+        self.current_flow.current_choices.clear()
         self.current_pointer = None
+        self.previous_pointer = None
+        self.did_safe_exit = True
 
     @property
     def generated_choices(self) -> list[Choice]:
@@ -343,3 +348,6 @@ class State:
             return True
 
         return False
+
+    def visit_count_for_container(self, container: Container) -> int:
+        return self._visit_counts.get(container, 0)

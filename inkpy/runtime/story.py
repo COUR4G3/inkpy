@@ -9,6 +9,7 @@ from collections import defaultdict
 from . import serialisation, typing
 from .call_stack import PushPopType
 from .choice import Choice
+from .choice_point import ChoicePoint
 from .container import Container
 from .control_command import ControlCommand
 from .divert import Divert
@@ -18,7 +19,7 @@ from .path import Path
 from .pointer import Pointer
 from .search_result import SearchResult
 from .state import State
-from .value import IntValue, StringValue, Value
+from .value import DivertTargetValue, IntValue, StringValue, Value, VariablePointerValue
 from .variable_assignment import VariableAssignment
 from .variable_reference import VariableReference
 from .variables_state import VariablesState
@@ -46,6 +47,7 @@ class Story(InkObject):
         self._on_error: typing.ErrorHandler | None = None
         self._on_warning: typing.WarningHandler | None = None
         self._state_snapshot_at_last_newline: State | None = None
+        self._temporary_evaluation_container: Container | None = None
 
         if data:
             self.load(data)
@@ -76,6 +78,18 @@ class Story(InkObject):
     @property
     def can_continue(self) -> bool:
         return self.state.can_continue
+
+    def choose_choice_index(self, index: int):
+        assert index >= 0 and index < len(self.state.generated_choices)
+
+        choice = self.state.generated_choices[index]
+
+        # if self._on_make_choice:
+        #     self._on_make_choice(choice)
+
+        self.state.call_stack.current_thread = choice.thread_at_generation
+
+        self.choose_path(choice.target_path)
 
     def choose_path(self, path: Path, incrementing_turn_index: bool = True):
         self.state.set_chosen_path(path, incrementing_turn_index)
@@ -146,7 +160,35 @@ class Story(InkObject):
                 self.restore_snapshot()
 
             if not self.can_continue:
-                pass  # TODO: stuff
+                if self.state.call_stack.can_pop_thread:
+                    self._add_error(
+                        "Thread available to pop, threads should always be flat by the "
+                        "end of evaluation?"
+                    )
+
+                if (
+                    not self.state.generated_choices
+                    and not self.state.did_safe_exit
+                    and not self._temporary_evaluation_container
+                ):
+                    if self.state.call_stack.can_pop(PushPopType.Tunnel):
+                        self._add_error(
+                            "Unexpectedly reached end of content. Do you need a '->->' "
+                            "to return from a tunnel?"
+                        )
+                    elif self.state.call_stack.can_pop(PushPopType.Function):
+                        self._add_error(
+                            "Unexpectedly reached end of content. Do you need a "
+                            "'~return'?"
+                        )
+                    elif not self.state.call_stack.can_pop():
+                        self._add_error(
+                            "Ran out of content. Do you need a '->DONE' or '-> END'?"
+                        )
+                    else:
+                        self._add_error(
+                            "Unexpectedly reached end of content for unknown reason"
+                        )
 
         self.state.did_safe_exit = False
         self._saw_lookahead_unsafe_function_after_newline = False
@@ -339,7 +381,14 @@ class Story(InkObject):
         if is_logic_or_flow_control:
             should_add_to_stream = False
 
-        # TODO: choice with condition
+        # choice with condition
+        if isinstance(content, ChoicePoint):
+            choice = self.process_choice(content)
+            if choice:
+                self.state.generated_choices.append(choice)
+
+            content = None
+            should_add_to_stream = False
 
         # if container has no content, then it is the content itself, and skip over it
         if isinstance(content, Container):
@@ -347,7 +396,13 @@ class Story(InkObject):
 
         # content to add to evaluation stack or output stream
         if should_add_to_stream:
-            # TODO: variable pointer
+            # if we push a variable pointer value, we duplicate it so we can update the
+            # content index
+            if isinstance(content, VariablePointerValue) and content.index == -1:
+                index = self.state.call_stack.context_for_variable_named(
+                    content.variable_name
+                )
+                content = VariablePointerValue(content.variable_name, index)
 
             # push to expression evaluation stack
             if self.state.in_expression_evaluation:
@@ -369,7 +424,7 @@ class Story(InkObject):
             self.state.call_stack.push_thread()
 
     def _perform_logic_and_flow_control(self, content):
-        if not content:
+        if content is None:
             return False
 
         if isinstance(content, Divert):
@@ -380,7 +435,29 @@ class Story(InkObject):
                     return True
 
             if content.has_variable_target:
-                raise NotImplementedError()
+                name = content.variable_divert_name
+                value = self.state.variables_state.get(name)
+
+                if value is None:
+                    self._add_error(
+                        "Tried to divert using a target from a variable that could not "
+                        f"found ({name})"
+                    )
+                elif not isinstance(value, DivertTargetValue):
+                    message = (
+                        "Tried to divert to a target from a variable, but the variable "
+                        f"({name}) didn't contain a divert target, it "
+                    )
+
+                    if isinstance(value, IntValue) and value.value == 0:
+                        message += "was empty/null (the value 0)."
+                    else:
+                        message += f"contained '{value!r}'"
+
+                    self._add_error(message)
+
+                self.state.diverted_pointer = self.pointer_at_path(value.target_path)
+
             elif content.is_external:
                 raise NotImplementedError()
             else:
@@ -439,10 +516,13 @@ class Story(InkObject):
                 type = PushPopType.Tunnel
 
                 value = self.state.pop_evaluation_stack()
-                if not isinstance(value, Void):
-                    raise NotImplementedError()
 
                 override_tunnel_return_target = None
+                if isinstance(value, DivertTargetValue):
+                    override_tunnel_return_target = value
+                elif not isinstance(value, Void):
+                    self._add_error("Expected void if ->-> doesn't override target")
+                    return True
 
                 if self.state.try_exit_function_evaluation_from_game():
                     pass
@@ -552,6 +632,54 @@ class Story(InkObject):
 
         return False
 
+    def pop_choice_string_and_tags(self) -> tuple[str, list[str]]:
+        choice_only_string = self.state.pop_evaluation_stack()
+
+        # while( state.evaluationStack.Count > 0 && state.PeekEvaluationStack() is Tag ) {
+        #             if( tags == null ) tags = new List<string>();
+        #             var tag = (Tag)state.PopEvaluationStack ();
+        #             tags.Insert(0, tag.text); // popped in reverse order
+        #         }
+
+        return choice_only_string.value, []
+
+    def process_choice(self, choice_point: ChoicePoint):
+        show_choice = True
+
+        if choice_point.has_condition:
+            value = self.state.pop_evaluation_stack()
+            if self.is_truthy(value):
+                show_choice = False
+
+        start_tags = []
+        start_text = ""
+        choice_only_tags = []
+        choice_only_text = ""
+
+        if choice_point.has_choice_only_content:
+            choice_only_text, choice_only_tags = self.pop_choice_string_and_tags()
+
+        if choice_point.has_start_content:
+            start_text, start_tags = self.pop_choice_string_and_tags()
+
+        if choice_point.once_only:
+            count = self.state.visit_count_for_container(choice_point.choice_target)
+            if count > 0:
+                show_choice = False
+
+        if not show_choice:
+            return
+
+        choice = Choice()
+        choice.target_path = choice_point.path_on_choice
+        choice.source_path = str(choice_point.path)
+        choice.is_invisible_default = choice_point.is_invisible_default
+        choice.tags = choice_only_tags + start_tags
+        choice.thread_at_generation = self.state.call_stack.fork_thread()
+        choice.text = (start_text + choice_only_text).strip()
+
+        return choice
+
     @property
     def current_choices(self) -> list[Choice]:
         """List of choices available at the current point in the story."""
@@ -615,9 +743,15 @@ class Story(InkObject):
 
     def is_truthy(self, value: InkObject) -> bool:
         truthy = False
-        if isinstance(value, Value):
-            # TODO: check for divert target value
+        if isinstance(value, DivertTargetValue):
+            self._add_error(
+                f"Shouldn't use a divert target (to {value.target_path}) as a "
+                "conditional value. Did you intend a function call 'likeThis()' or "
+                "a read count check 'likeThis'? (no arrows)"
+            )
 
+            return False
+        elif isinstance(value, Value):
             return bool(value)
 
         return truthy

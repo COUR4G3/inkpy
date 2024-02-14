@@ -89,6 +89,7 @@ class CallStack:
     def copy(self) -> "CallStack":
         call_stack = CallStack()
 
+        call_stack.start_of_root = self.start_of_root
         call_stack.threads = [t.copy() for t in self.threads]
 
         return call_stack
@@ -129,6 +130,11 @@ class CallStack:
     @property
     def elements(self) -> list["CallStack.Element"]:
         return self.call_stack
+
+    def fork_thread(self) -> "CallStack.Thread":
+        thread = self.current_thread.copy()
+        thread.index = len(self.threads)
+        return thread
 
     def get_temporary_variable(self, name: str, index: int = -1) -> "Value":
         if index == -1:

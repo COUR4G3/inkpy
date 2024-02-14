@@ -29,7 +29,7 @@ def test_newline_consistency(compile_story):
 #     assert "".join(story.continue_maximally()) == "Phrase 1\nPhrase 2\n"
 
 
-# def test_newlines_with_string_eval(compile_story):
-#     story = compile_story("newlines_with_string_eval")
+def test_newlines_with_string_eval(compile_story):
+    story = compile_story("newlines_with_string_eval")
 
-#     assert "".join(story.continue_maximally()) == "A\nB\nA\n3\nB\n"
+    assert "".join(story.continue_maximally()) == "A\nB\nA\n3\nB\n"

@@ -47,58 +47,58 @@ def test_temporaries_at_global_scope(compile_story):
     assert story.continue_() == "54\n"
 
 
-# def test_variable_declaration_in_conditional(compile_story):
-#     story = compile_story("variable_declaration_in_conditional")
+def test_variable_declaration_in_conditional(compile_story):
+    story = compile_story("variable_declaration_in_conditional")
 
-#     assert story.continue_() == "5\n"
-
-
-# def test_variable_divert_target(compile_story):
-#     story = compile_story("variable_divert_target")
-
-#     assert story.continue_() == "Here.\n"
+    assert story.continue_() == "5\n"
 
 
-# def test_variable_get_set_api(compile_story):
-#     story = compile_story("variable_get_set_api")
+def test_variable_divert_target(compile_story):
+    story = compile_story("variable_divert_target")
 
-#     assert "".join(story.continue_maximally()) == "5\n"
-#     assert story.state.variables_state["x"] == 5
-
-#     story.state.variables_state["x"] = 10
-#     story.choose_choice_index(0)
-#     assert "".join(story.continue_maximally()) == "10\n"
-#     assert story.state.variables_state["x"] == 10
-
-#     story.state.variables_state["x"] = 8.5
-#     story.choose_choice_index(0)
-#     assert "".join(story.continue_maximally()) == "8.5\n"
-#     assert pytest.approx(story.state.variables_state["x"], 8.5)
-
-#     story.state.variables_state["x"] = "a string"
-#     story.choose_choice_index(0)
-#     assert "".join(story.continue_maximally()) == "a string\n"
-#     assert story.state.variables_state["x"] == "a string"
-
-#     assert story.state.variables_state["z"] is None
-
-#     with pytest.raises(ValueError):
-#         story.state.variables_state["x"] = {}
+    assert story.continue_() == "Here.\n"
 
 
-# def test_variable_pointer_ref_from_knot(compile_story):
-#     story = compile_story("variable_pointer_ref_from_knot")
+def test_variable_get_set_api(compile_story):
+    story = compile_story("variable_get_set_api")
 
-#     assert story.continue_() == "6\n"
+    assert "".join(story.continue_maximally()) == "5\n"
+    assert story.state.variables_state["x"] == 5
+
+    story.state.variables_state["x"] = 10
+    story.choose_choice_index(0)
+    assert "".join(story.continue_maximally()) == "10\n"
+    assert story.state.variables_state["x"] == 10
+
+    story.state.variables_state["x"] = 8.5
+    story.choose_choice_index(0)
+    assert "".join(story.continue_maximally()) == "8.5\n"
+    assert pytest.approx(story.state.variables_state["x"], 8.5)
+
+    story.state.variables_state["x"] = "a string"
+    story.choose_choice_index(0)
+    assert "".join(story.continue_maximally()) == "a string\n"
+    assert story.state.variables_state["x"] == "a string"
+
+    assert story.state.variables_state["z"] is None
+
+    with pytest.raises(ValueError):
+        story.state.variables_state["x"] = {}
 
 
-# def test_variable_swap_recurse(compile_story):
-#     story = compile_story("variable_swap_recurse")
+def test_variable_pointer_ref_from_knot(compile_story):
+    story = compile_story("variable_pointer_ref_from_knot")
 
-#     assert "".join(story.continue_maximally()) == "1 2\n"
+    assert story.continue_() == "6\n"
 
 
-# def test_variable_tunnel(compile_story):
-#     story = compile_story("variable_tunnel")
+def test_variable_swap_recurse(compile_story):
+    story = compile_story("variable_swap_recurse")
 
-#     assert "".join(story.continue_maximally()) == "STUFF\n"
+    assert "".join(story.continue_maximally()) == "1 2\n"
+
+
+def test_variable_tunnel(compile_story):
+    story = compile_story("variable_tunnel")
+
+    assert "".join(story.continue_maximally()) == "STUFF\n"
